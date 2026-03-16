@@ -36,7 +36,7 @@
 | `src/**` | No | Safe |
 | `spike/**` | No | Safe |
 | `scripts/**` | No (uses `$(dirname "$0")`) | Safe |
-| `docs/protocol-captures/*.jsonl` | **Yes** — `/Users/lucascouto/...` in session CWD fields | **Must exclude from public repo** |
+| `docs/protocol-captures/*.jsonl` | **Yes** — `/Users/<user>/...` in session CWD fields | **Must exclude from public repo** |
 | `docs/claude-permission-probe.md` | **Yes** — references local paths in examples | **Must exclude from public repo** |
 | `.claude/settings.local.json` | Yes — already gitignored | Safe |
 
