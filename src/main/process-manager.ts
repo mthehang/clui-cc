@@ -1,10 +1,11 @@
-import { spawn, execSync, ChildProcess } from 'child_process'
+import { spawn, ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { homedir } from 'os'
 import { appendFileSync } from 'fs'
 import { join } from 'path'
 import { StreamParser } from './stream-parser'
 import { getCliEnv } from './cli-env'
+import { findClaudeBinary, prependBinDirToPath } from './platform'
 import type { ClaudeEvent, RunOptions } from '../shared/types'
 
 const LOG_FILE = join(homedir(), '.clui-debug.log')
@@ -31,39 +32,8 @@ export class ProcessManager extends EventEmitter {
   constructor() {
     super()
     // Find the real claude binary — Electron doesn't inherit shell aliases or full PATH
-    this.claudeBinary = this.findClaudeBinary()
+    this.claudeBinary = findClaudeBinary()
     log(`Claude binary: ${this.claudeBinary}`)
-  }
-
-  private findClaudeBinary(): string {
-    // Try common locations
-    const candidates = [
-      '/usr/local/bin/claude',
-      '/opt/homebrew/bin/claude',
-      join(homedir(), '.npm-global/bin/claude'),
-      join(homedir(), '.nvm/versions/node', '**', 'bin/claude'),
-    ]
-
-    for (const c of candidates) {
-      try {
-        execSync(`test -x "${c}"`, { stdio: 'ignore' })
-        return c
-      } catch {}
-    }
-
-    // Fallback: ask a login shell
-    try {
-      const result = execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-      if (result) return result
-    } catch {}
-
-    try {
-      const result = execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-      if (result) return result
-    } catch {}
-
-    // Last resort
-    return 'claude'
   }
 
   startRun(options: RunOptions): RunHandle {
@@ -107,10 +77,7 @@ export class ProcessManager extends EventEmitter {
     const env = getCliEnv()
 
     // Ensure our claude binary's directory is in PATH
-    const binDir = this.claudeBinary.substring(0, this.claudeBinary.lastIndexOf('/'))
-    if (env.PATH && !env.PATH.includes(binDir)) {
-      env.PATH = `${binDir}:${env.PATH}`
-    }
+    prependBinDirToPath(env, this.claudeBinary)
 
     const child = spawn(this.claudeBinary, args, {
       stdio: ['pipe', 'pipe', 'pipe'],

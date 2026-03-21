@@ -16,9 +16,11 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "electron-vite build --mode production && electron-builder --mac --dir",
-    "doctor": "bash scripts/doctor.sh",
-    "postinstall": "electron-builder install-app-deps && bash scripts/patch-dev-icon.sh"
+    "dist": "electron-vite build --mode production && electron-builder --dir",
+    "dist:mac": "electron-vite build --mode production && electron-builder --mac --dir",
+    "dist:win": "electron-vite build --mode production && electron-builder --win --dir",
+    "doctor": "node scripts/doctor.js",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -48,6 +50,20 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Clui CC uses your microphone to transcribe voice input locally with Whisper."
       }
+    },
+    "win": {
+      "icon": "resources/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Clui CC"
     }
   },
   "devDependencies": {

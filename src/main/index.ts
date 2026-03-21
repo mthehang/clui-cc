@@ -8,6 +8,7 @@ import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
+import { IS_MAC, IS_WIN, isAbsolutePath, getIconPath, encodeProjectPath, findBinaryInPath } from './platform'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
 
@@ -117,7 +118,7 @@ function createWindow(): void {
     roundedCorners: true,
     backgroundColor: '#00000000',
     show: false,
-    icon: join(__dirname, '../../resources/icon.icns'),
+    icon: getIconPath(join(__dirname, '../../resources')),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -127,8 +128,10 @@ function createWindow(): void {
 
   // Belt-and-suspenders: panel already joins all spaces and floats,
   // but explicit flags ensure correct behavior on older Electron builds.
-  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  mainWindow.setAlwaysOnTop(true, 'screen-saver')
+  if (IS_MAC) {
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
+  mainWindow.setAlwaysOnTop(true, IS_MAC ? 'screen-saver' : 'pop-up-menu')
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
@@ -176,7 +179,9 @@ function showWindow(source = 'unknown'): void {
   // Always re-assert space membership — the flag can be lost after hide/show cycles
   // and must be set before show() so the window joins the active Space, not its
   // last-known Space.
-  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  if (IS_MAC) {
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
 
   if (SPACES_DEBUG) {
     log(`[spaces] showWindow#${toggleId} source=${source} move-to-display id=${display.id}`)
@@ -351,13 +356,12 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   try {
     const cwd = projectPath || process.cwd()
     // Validate projectPath — reject null bytes, newlines, non-absolute paths
-    if (/[\0\r\n]/.test(cwd) || !cwd.startsWith('/')) {
+    if (/[\0\r\n]/.test(cwd) || !isAbsolutePath(cwd)) {
       log(`LIST_SESSIONS: rejected invalid projectPath: ${cwd}`)
       return []
     }
     // Claude stores project sessions at ~/.claude/projects/<encoded-path>/
-    // Path encoding: replace all '/' with '-' (leading '/' becomes leading '-')
-    const encodedPath = cwd.replace(/\//g, '-')
+    const encodedPath = encodeProjectPath(cwd)
     const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath)
     if (!existsSync(sessionsDir)) {
       log(`LIST_SESSIONS: directory not found: ${sessionsDir}`)
@@ -446,11 +450,11 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
   try {
     const cwd = projectPath || process.cwd()
     // Validate projectPath — reject null bytes, newlines, non-absolute paths
-    if (/[\0\r\n]/.test(cwd) || !cwd.startsWith('/')) {
+    if (/[\0\r\n]/.test(cwd) || !isAbsolutePath(cwd)) {
       log(`LOAD_SESSION: rejected invalid projectPath: ${cwd}`)
       return []
     }
-    const encodedPath = cwd.replace(/\//g, '-')
+    const encodedPath = encodeProjectPath(cwd)
     const filePath = join(homedir(), '.claude', 'projects', encodedPath, `${sessionId}.jsonl`)
     if (!existsSync(filePath)) return []
 
@@ -590,6 +594,35 @@ ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {
   await new Promise((r) => setTimeout(r, 300))
 
   try {
+    if (IS_WIN) {
+      // Windows: use Electron desktopCapturer API
+      const { desktopCapturer } = require('electron')
+      const { writeFileSync } = require('fs')
+      const { tmpdir } = require('os')
+      const { join } = require('path')
+
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: screen.getPrimaryDisplay().workAreaSize,
+      })
+      if (sources.length > 0) {
+        const buf = sources[0].thumbnail.toPNG()
+        const tmpPath = join(tmpdir(), `clui-screenshot-${Date.now()}.png`)
+        writeFileSync(tmpPath, buf)
+        return {
+          id: crypto.randomUUID(),
+          type: 'image',
+          name: `screenshot ${++screenshotCounter}.png`,
+          path: tmpPath,
+          mimeType: 'image/png',
+          dataUrl: `data:image/png;base64,${buf.toString('base64')}`,
+          size: buf.length,
+        }
+      }
+      throw new Error('No screen sources available')
+    }
+
+    // macOS: use native screencapture with interactive selection
     const { execSync } = require('child_process')
     const { join } = require('path')
     const { tmpdir } = require('os')
@@ -694,25 +727,36 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     writeFileSync(tmpWav, buf)
     mark('decode+write_wav', t0)
 
-    // Find whisper backend in priority order: whisperkit-cli (Apple Silicon CoreML) → whisper-cli (whisper-cpp) → whisper (python)
+    // Find whisper backend in priority order
     t0 = Date.now()
-    const candidates = [
-      '/opt/homebrew/bin/whisperkit-cli',
-      '/usr/local/bin/whisperkit-cli',
-      '/opt/homebrew/bin/whisper-cli',
-      '/usr/local/bin/whisper-cli',
-      '/opt/homebrew/bin/whisper',
-      '/usr/local/bin/whisper',
-      join(homedir(), '.local/bin/whisper'),
-    ]
-
     let whisperBin = ''
-    for (const c of candidates) {
-      if (existsSync(c)) { whisperBin = c; break }
+
+    if (IS_WIN) {
+      // Windows: use findBinaryInPath for whisper-cli (whisper.cpp) and whisper (Python)
+      // WhisperKit is Apple Silicon only — not available on Windows
+      for (const name of ['whisper-cli', 'whisper']) {
+        const found = findBinaryInPath(name)
+        if (found) { whisperBin = found; break }
+      }
+    } else {
+      // macOS: check well-known Homebrew paths first
+      const candidates = [
+        '/opt/homebrew/bin/whisperkit-cli',
+        '/usr/local/bin/whisperkit-cli',
+        '/opt/homebrew/bin/whisper-cli',
+        '/usr/local/bin/whisper-cli',
+        '/opt/homebrew/bin/whisper',
+        '/usr/local/bin/whisper',
+        join(homedir(), '.local/bin/whisper'),
+      ]
+
+      for (const c of candidates) {
+        if (existsSync(c)) { whisperBin = c; break }
+      }
     }
     mark('probe_binary_paths', t0)
 
-    if (!whisperBin) {
+    if (!whisperBin && IS_MAC) {
       t0 = Date.now()
       for (const name of ['whisperkit-cli', 'whisper-cli', 'whisper']) {
         try {
@@ -724,16 +768,21 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     }
 
     if (!whisperBin) {
-      const hint = process.arch === 'arm64'
-        ? 'brew install whisperkit-cli   (or: brew install whisper-cpp)'
-        : 'brew install whisper-cpp'
+      let hint: string
+      if (IS_WIN) {
+        hint = 'Install whisper.cpp: winget install ggerganov.whisper.cpp — or download from https://github.com/ggerganov/whisper.cpp/releases'
+      } else {
+        hint = process.arch === 'arm64'
+          ? 'brew install whisperkit-cli   (or: brew install whisper-cpp)'
+          : 'brew install whisper-cpp'
+      }
       return {
         error: `Whisper not found. Install with:\n  ${hint}`,
         transcript: null,
       }
     }
 
-    const isWhisperKit = whisperBin.includes('whisperkit-cli')
+    const isWhisperKit = !IS_WIN && whisperBin.includes('whisperkit-cli')
     const isWhisperCpp = !isWhisperKit && whisperBin.includes('whisper-cli')
 
     log(`Transcribing with: ${whisperBin} (backend: ${isWhisperKit ? 'WhisperKit' : isWhisperCpp ? 'whisper-cpp' : 'Python whisper'})`)
@@ -789,12 +838,24 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       const modelCandidates = [
         join(homedir(), '.local/share/whisper/ggml-base.bin'),
         join(homedir(), '.local/share/whisper/ggml-tiny.bin'),
-        '/opt/homebrew/share/whisper-cpp/models/ggml-base.bin',
-        '/opt/homebrew/share/whisper-cpp/models/ggml-tiny.bin',
+        ...(IS_WIN ? [
+          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-base.bin'),
+          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-tiny.bin'),
+          join(homedir(), 'whisper.cpp', 'models', 'ggml-base.bin'),
+          join(homedir(), 'whisper.cpp', 'models', 'ggml-tiny.bin'),
+        ] : [
+          '/opt/homebrew/share/whisper-cpp/models/ggml-base.bin',
+          '/opt/homebrew/share/whisper-cpp/models/ggml-tiny.bin',
+        ]),
         join(homedir(), '.local/share/whisper/ggml-base.en.bin'),
         join(homedir(), '.local/share/whisper/ggml-tiny.en.bin'),
-        '/opt/homebrew/share/whisper-cpp/models/ggml-base.en.bin',
-        '/opt/homebrew/share/whisper-cpp/models/ggml-tiny.en.bin',
+        ...(IS_WIN ? [
+          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-base.en.bin'),
+          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-tiny.en.bin'),
+        ] : [
+          '/opt/homebrew/share/whisper-cpp/models/ggml-base.en.bin',
+          '/opt/homebrew/share/whisper-cpp/models/ggml-tiny.en.bin',
+        ]),
       ]
 
       let modelPath = ''
@@ -803,8 +864,11 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       }
 
       if (!modelPath) {
+        const downloadHint = IS_WIN
+          ? 'Whisper model not found. Download with:\n  mkdir "%LOCALAPPDATA%\\whisper-cpp\\models" & curl -L -o "%LOCALAPPDATA%\\whisper-cpp\\models\\ggml-tiny.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
+          : 'Whisper model not found. Download with:\n  mkdir -p ~/.local/share/whisper && curl -L -o ~/.local/share/whisper/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
         return {
-          error: 'Whisper model not found. Download with:\n  mkdir -p ~/.local/share/whisper && curl -L -o ~/.local/share/whisper/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
+          error: downloadHint,
           transcript: null,
         }
       }
@@ -919,11 +983,26 @@ ipcMain.handle(IPC.OPEN_IN_TERMINAL, (_event, arg: string | null | { sessionId?:
   }
 
   // Sanitize projectPath — reject null bytes, newlines, and non-absolute paths
-  if (/[\0\r\n]/.test(projectPath) || !projectPath.startsWith('/')) {
+  if (/[\0\r\n]/.test(projectPath) || !isAbsolutePath(projectPath)) {
     log(`OPEN_IN_TERMINAL: rejected invalid projectPath: ${projectPath}`)
     return false
   }
 
+  // Windows: launch in Windows Terminal or fallback to cmd.exe
+  if (IS_WIN) {
+    const { spawn } = require('child_process')
+    const claudeCmd = sessionId ? `claude --resume ${sessionId}` : 'claude'
+    try {
+      // Try Windows Terminal first
+      spawn('wt', ['-d', projectPath, 'cmd', '/k', claudeCmd], { detached: true, stdio: 'ignore' }).unref()
+    } catch {
+      // Fallback to cmd.exe
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', claudeCmd], { detached: true, stdio: 'ignore', cwd: projectPath }).unref()
+    }
+    return true
+  }
+
+  // macOS: use AppleScript to open Terminal.app
   // Shell-safe single-quote escaping: replace ' with '\'' (end quote, escaped literal quote, reopen quote)
   // Single quotes block all shell expansion ($, `, \, etc.) — unlike double quotes which allow $() and backticks
   const shellSingleQuote = (s: string): string => "'" + s.replace(/'/g, "'\\''") + "'"
@@ -1061,17 +1140,18 @@ app.whenReady().then(async () => {
   }
 
 
-  // Primary: Option+Space (2 keys, doesn't conflict with shell)
-  // Fallback: Cmd+Shift+K kept as secondary shortcut
-  const registered = globalShortcut.register('Alt+Space', () => toggleWindow('shortcut Alt+Space'))
+  // Primary: Option+Space on macOS, Ctrl+Alt+Space on Windows (2–3 keys, doesn't conflict with shell/IME)
+  // Fallback: Cmd+Shift+K / Ctrl+Shift+K kept as secondary shortcut
+  const toggleShortcut = IS_MAC ? 'Alt+Space' : 'Ctrl+Alt+Space'
+  const registered = globalShortcut.register(toggleShortcut, () => toggleWindow(`shortcut ${toggleShortcut}`))
   if (!registered) {
-    log('Alt+Space shortcut registration failed — macOS input sources may claim it')
+    log(`${toggleShortcut} shortcut registration failed — ${IS_MAC ? 'macOS input sources may claim it' : 'another app may have registered it'}`)
   }
   globalShortcut.register('CommandOrControl+Shift+K', () => toggleWindow('shortcut Cmd/Ctrl+Shift+K'))
 
   const trayIconPath = join(__dirname, '../../resources/trayTemplate.png')
   const trayIcon = nativeImage.createFromPath(trayIconPath)
-  trayIcon.setTemplateImage(true)
+  if (IS_MAC) { trayIcon.setTemplateImage(true) }
   tray = new Tray(trayIcon)
   tray.setToolTip('Clui CC — Claude Code UI')
   tray.on('click', () => toggleWindow('tray click'))
