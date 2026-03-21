@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck, Keyboard } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
@@ -437,6 +437,15 @@ export function StatusBar() {
 
       {/* Right — Open in CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
+        <span
+          className="text-[10px] flex items-center gap-1 opacity-60"
+          style={{ color: colors.textTertiary }}
+          title={navigator.platform?.includes('Mac') ? 'Toggle: ⌥Space or ⌘⇧K' : 'Toggle: Ctrl+Alt+Space or Ctrl+Shift+K'}
+        >
+          <Keyboard size={10} />
+          {navigator.platform?.includes('Mac') ? '⌥Space' : 'Ctrl+Alt+Space'}
+        </span>
+        <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
         <button
           onClick={handleOpenInTerminal}
           className="flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"

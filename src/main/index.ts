@@ -109,6 +109,8 @@ function createWindow(): void {
     y,
     ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),  // NSPanel — non-activating, joins all spaces
     frame: false,
+    titleBarStyle: 'hidden',
+    title: '',
     transparent: true,
     resizable: false,
     movable: true,

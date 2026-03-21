@@ -4,7 +4,7 @@ import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
-import { useColors } from '../theme'
+import { useColors, useThemeStore } from '../theme'
 
 const INPUT_MIN_HEIGHT = 20
 const INPUT_MAX_HEIGHT = 140
@@ -43,6 +43,7 @@ export function InputBar() {
   const activeTabId = useSessionStore((s) => s.activeTabId)
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const colors = useColors()
+  const micDeviceId = useThemeStore((s) => s.micDeviceId)
   const isBusy = tab?.status === 'running' || tab?.status === 'connecting'
   const isConnecting = tab?.status === 'connecting'
   const hasContent = input.trim().length > 0 || (tab?.attachments?.length ?? 0) > 0
@@ -340,7 +341,9 @@ export function InputBar() {
     chunksRef.current = []
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
+      })
     } catch {
       setVoiceError('Microphone permission denied.')
       return

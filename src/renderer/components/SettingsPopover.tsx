@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon } from '@phosphor-icons/react'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, Microphone, Keyboard } from '@phosphor-icons/react'
 import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
@@ -50,11 +50,14 @@ export function SettingsPopover() {
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const expandedUI = useThemeStore((s) => s.expandedUI)
   const setExpandedUI = useThemeStore((s) => s.setExpandedUI)
+  const micDeviceId = useThemeStore((s) => s.micDeviceId)
+  const setMicDeviceId = useThemeStore((s) => s.setMicDeviceId)
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
   const [open, setOpen] = useState(false)
+  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([])
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ right: number; top?: number; bottom?: number; maxHeight?: number }>({ right: 0 })
@@ -120,6 +123,13 @@ export function SettingsPopover() {
     }
   }, [open, expandedUI, isExpanded, updatePos])
 
+  useEffect(() => {
+    if (!open) return
+    navigator.mediaDevices.enumerateDevices().then((devices) => {
+      setMicDevices(devices.filter((d) => d.kind === 'audioinput'))
+    }).catch(() => {})
+  }, [open])
+
   const handleToggle = () => {
     if (!open) updatePos()
     setOpen((o) => !o)
@@ -151,7 +161,7 @@ export function SettingsPopover() {
             ...(pos.top != null ? { top: pos.top } : {}),
             ...(pos.bottom != null ? { bottom: pos.bottom } : {}),
             right: pos.right,
-            width: 240,
+            width: 260,
             pointerEvents: 'auto',
             background: colors.popoverBg,
             backdropFilter: 'blur(20px)',
@@ -219,6 +229,56 @@ export function SettingsPopover() {
                   colors={colors}
                   label="Toggle dark theme"
                 />
+              </div>
+            </div>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            {/* Microphone */}
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Microphone size={14} style={{ color: colors.textTertiary }} />
+                <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
+                  Microphone
+                </div>
+              </div>
+              <select
+                value={micDeviceId || ''}
+                onChange={(e) => setMicDeviceId(e.target.value || null)}
+                className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none transition-colors"
+                style={{
+                  background: colors.surfacePrimary,
+                  color: colors.textSecondary,
+                  border: `1px solid ${colors.containerBorder}`,
+                }}
+              >
+                <option value="">System default</option>
+                {micDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Microphone ${d.deviceId.slice(0, 8)}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            {/* Keyboard shortcut */}
+            <div>
+              <div className="flex items-center gap-2">
+                <Keyboard size={14} style={{ color: colors.textTertiary }} />
+                <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
+                  Toggle shortcut
+                </div>
+              </div>
+              <div className="mt-1 text-[11px] flex items-center gap-1.5" style={{ color: colors.textSecondary }}>
+                <kbd className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}>
+                  {navigator.platform?.includes('Mac') ? '⌥ Space' : 'Ctrl+Alt+Space'}
+                </kbd>
+                <span style={{ color: colors.textTertiary }}>or</span>
+                <kbd className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}>
+                  {navigator.platform?.includes('Mac') ? '⌘⇧K' : 'Ctrl+Shift+K'}
+                </kbd>
               </div>
             </div>
           </div>
