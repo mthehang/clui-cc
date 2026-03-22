@@ -90,58 +90,48 @@ function downloadWhisperBinary() {
 
 function downloadAndExtractZip(zipUrl, tag) {
   const zipPath = path.join(WHISPER_DIR, `whisper-${tag}.zip`)
+  const extractDir = path.join(WHISPER_DIR, '_extract')
 
   downloadFile(zipUrl, zipPath)
 
   log('Extracting whisper binary from zip...')
 
   try {
-    // List zip contents to find the binary
-    const listing = execFileSync('tar', ['-tf', zipPath], { encoding: 'utf-8' })
-    const entries = listing.split(/\r?\n/).filter(Boolean)
+    // Use PowerShell Expand-Archive (works reliably on Windows, no C: host issue)
+    if (fs.existsSync(extractDir)) fs.rmSync(extractDir, { recursive: true, force: true })
+    fs.mkdirSync(extractDir, { recursive: true })
 
-    // Find whisper-cli.exe or main.exe
-    const binEntry = entries.find(e => e.endsWith('whisper-cli.exe'))
-      || entries.find(e => e.endsWith('main.exe'))
+    execFileSync('powershell', [
+      '-NoProfile', '-Command',
+      `Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force`
+    ], { stdio: 'inherit', timeout: 120000 })
 
-    if (!binEntry) {
-      log('Zip contents:')
-      entries.forEach(e => log(`  ${e}`))
+    // Recursively find whisper-cli.exe or main.exe
+    const found = findFileRecursive(extractDir, name =>
+      name === 'whisper-cli.exe' || name === 'main.exe'
+    )
+
+    if (!found) {
+      const allFiles = listFilesRecursive(extractDir)
+      log('Extracted contents:')
+      allFiles.forEach(f => log(`  ${f}`))
       throw new Error('Could not find whisper-cli.exe or main.exe in zip')
     }
 
-    // Extract the binary
-    execFileSync('tar', ['-xf', zipPath, '-C', WHISPER_DIR, binEntry], { stdio: 'inherit' })
+    log(`Found binary: ${path.basename(found)}`)
+    fs.copyFileSync(found, BIN_PATH)
 
-    // Move to expected name if nested in subdirectory
-    const extractedPath = path.join(WHISPER_DIR, binEntry)
-    if (extractedPath !== BIN_PATH && fs.existsSync(extractedPath)) {
-      fs.renameSync(extractedPath, BIN_PATH)
-    }
-
-    // Also extract any DLLs (ggml.dll, whisper.dll) that might be needed
-    const dlls = entries.filter(e => e.endsWith('.dll'))
+    // Copy any DLLs (ggml.dll, whisper.dll) to WHISPER_DIR
+    const dlls = listFilesRecursive(extractDir).filter(f => f.endsWith('.dll'))
     for (const dll of dlls) {
-      try {
-        execFileSync('tar', ['-xf', zipPath, '-C', WHISPER_DIR, dll], { stdio: 'inherit' })
-        const dllExtracted = path.join(WHISPER_DIR, dll)
-        const dllDest = path.join(WHISPER_DIR, path.basename(dll))
-        if (dllExtracted !== dllDest && fs.existsSync(dllExtracted)) {
-          fs.renameSync(dllExtracted, dllDest)
-        }
-      } catch {}
-    }
-
-    // Clean up nested dirs left by extraction
-    for (const entry of fs.readdirSync(WHISPER_DIR)) {
-      const full = path.join(WHISPER_DIR, entry)
-      if (fs.statSync(full).isDirectory()) {
-        fs.rmSync(full, { recursive: true, force: true })
-      }
+      const dest = path.join(WHISPER_DIR, path.basename(dll))
+      fs.copyFileSync(dll, dest)
+      log(`Copied DLL: ${path.basename(dll)}`)
     }
   } finally {
-    // Clean up zip
+    // Clean up
     try { fs.unlinkSync(zipPath) } catch {}
+    try { fs.rmSync(extractDir, { recursive: true, force: true }) } catch {}
   }
 
   if (!fs.existsSync(BIN_PATH)) {
@@ -149,6 +139,32 @@ function downloadAndExtractZip(zipUrl, tag) {
   }
 
   log(`Binary ready: ${BIN_PATH}`)
+}
+
+function findFileRecursive(dir, predicate) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      const result = findFileRecursive(full, predicate)
+      if (result) return result
+    } else if (predicate(entry.name)) {
+      return full
+    }
+  }
+  return null
+}
+
+function listFilesRecursive(dir) {
+  const results = []
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      results.push(...listFilesRecursive(full))
+    } else {
+      results.push(full)
+    }
+  }
+  return results
 }
 
 function downloadModel() {
