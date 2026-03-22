@@ -430,6 +430,8 @@ export const IPC = {
   // Settings persistence
   GET_SETTINGS: 'clui:get-settings',
   SAVE_SETTINGS: 'clui:save-settings',
+  READ_GLOBAL_RULES: 'clui:read-global-rules',
+  SAVE_GLOBAL_RULES: 'clui:save-global-rules',
 
   // Auto-update
   CHECK_FOR_UPDATE: 'clui:check-for-update',

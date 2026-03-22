@@ -560,6 +560,31 @@ ipcMain.on(IPC.SAVE_SETTINGS, (_event, partial: Partial<AppSettings>) => {
   }
 })
 
+// ── Global Rules (reads/writes ~/.claude/CLAUDE.md) ──
+
+const globalRulesPath = join(homedir(), '.claude', 'CLAUDE.md')
+
+ipcMain.handle(IPC.READ_GLOBAL_RULES, () => {
+  try {
+    return existsSync(globalRulesPath) ? readFileSync(globalRulesPath, 'utf-8') : ''
+  } catch {
+    return ''
+  }
+})
+
+ipcMain.handle(IPC.SAVE_GLOBAL_RULES, (_event, content: string) => {
+  if (typeof content !== 'string') return
+  try {
+    const dir = join(homedir(), '.claude')
+    if (!existsSync(dir)) {
+      require('fs').mkdirSync(dir, { recursive: true })
+    }
+    writeFileSync(globalRulesPath, content, 'utf-8')
+  } catch (err: any) {
+    log(`Failed to save global rules: ${err.message}`)
+  }
+})
+
 // ── Auto-update IPC ──
 
 ipcMain.handle(IPC.GET_APP_VERSION, () => app.getVersion())

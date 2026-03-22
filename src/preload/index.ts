@@ -33,6 +33,8 @@ export interface CluiAPI {
   uninstallPlugin(pluginName: string): Promise<{ ok: boolean; error?: string }>
   getSettings(): Promise<AppSettings>
   saveSettings(settings: Partial<AppSettings>): void
+  readGlobalRules(): Promise<string>
+  saveGlobalRules(content: string): Promise<void>
   fetchUsage(opts?: { forceRefresh?: boolean }): Promise<CloudUsageResponse>
   setPermissionMode(mode: string): void
   setZoom(level: number): void
@@ -103,6 +105,8 @@ const api: CluiAPI = {
     ipcRenderer.invoke(IPC.MARKETPLACE_UNINSTALL, { pluginName }),
   getSettings: () => ipcRenderer.invoke(IPC.GET_SETTINGS),
   saveSettings: (settings) => ipcRenderer.send(IPC.SAVE_SETTINGS, settings),
+  readGlobalRules: () => ipcRenderer.invoke(IPC.READ_GLOBAL_RULES),
+  saveGlobalRules: (content) => ipcRenderer.invoke(IPC.SAVE_GLOBAL_RULES, content),
   fetchUsage: (opts) => ipcRenderer.invoke(IPC.FETCH_USAGE, opts),
   setPermissionMode: (mode) => ipcRenderer.send(IPC.SET_PERMISSION_MODE, mode),
   setZoom: (level: number) => ipcRenderer.send(IPC.SET_ZOOM, level),

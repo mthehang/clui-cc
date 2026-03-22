@@ -473,28 +473,44 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
 
 function GlobalRulesSection({ colors }: { colors: ReturnType<typeof useColors> }) {
   const [rules, setRules] = useState('')
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    window.clui.getSettings().then((s) => {
-      setRules(s.globalRules || '')
+    window.clui.readGlobalRules().then((content) => {
+      setRules(content || '')
     }).catch(() => {})
   }, [])
 
+  const handleSave = () => {
+    window.clui.saveGlobalRules(rules)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
   return (
     <div>
+      <div style={{ fontSize: 10, color: colors.textMuted, marginBottom: 4 }}>
+        ~/.claude/CLAUDE.md
+      </div>
       <textarea
         value={rules}
-        onChange={(e) => setRules(e.target.value)}
-        onBlur={() => window.clui.saveSettings({ globalRules: rules })}
-        placeholder="Custom system prompt applied to all sessions..."
-        rows={3}
+        onChange={(e) => { setRules(e.target.value); setSaved(false) }}
+        onBlur={handleSave}
+        placeholder="Global instructions applied to all Claude Code sessions..."
+        rows={5}
         className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none resize-none"
         style={{
           background: colors.surfacePrimary,
           color: colors.textSecondary,
           border: `1px solid ${colors.containerBorder}`,
+          fontFamily: 'monospace',
         }}
       />
+      {saved && (
+        <div style={{ fontSize: 10, color: colors.accent, marginTop: 2 }}>
+          Saved to ~/.claude/CLAUDE.md
+        </div>
+      )}
     </div>
   )
 }
