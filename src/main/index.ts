@@ -1,8 +1,10 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, clipboard, desktopCapturer } from 'electron'
 import { join } from 'path'
 import { existsSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync } from 'fs'
+import { execFile } from 'child_process'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
+import { promisify } from 'util'
 import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin, scanLocalSkills } from './marketplace/catalog'
@@ -294,26 +296,31 @@ ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { for
 
 ipcMain.handle(IPC.START, async () => {
   log('IPC START — fetching static CLI info')
-  const { execSync } = require('child_process')
 
-  let version = 'unknown'
-  try {
-    version = execSync('claude -v', { encoding: 'utf-8', timeout: 5000, env: getCliEnv() }).trim()
-  } catch {}
+  const execFileAsync = promisify(execFile)
+  const opts = { encoding: 'utf-8' as const, timeout: 5000, env: getCliEnv() }
+  const claudePath = findBinaryInPath('claude') || 'claude'
+
+  const [vResult, authResult, mcpResult] = await Promise.allSettled([
+    execFileAsync(claudePath, ['-v'], opts),
+    execFileAsync(claudePath, ['auth', 'status'], opts),
+    execFileAsync(claudePath, ['mcp', 'list'], opts),
+  ])
+
+  const version = vResult.status === 'fulfilled' ? vResult.value.stdout.trim() : 'unknown'
 
   let auth: { email?: string; subscriptionType?: string; authMethod?: string } = {}
-  try {
-    const raw = execSync('claude auth status', { encoding: 'utf-8', timeout: 5000, env: getCliEnv() }).trim()
-    auth = JSON.parse(raw)
-  } catch {}
+  if (authResult.status === 'fulfilled') {
+    try { auth = JSON.parse(authResult.value.stdout.trim()) } catch {}
+  }
 
   let mcpServers: string[] = []
-  try {
-    const raw = execSync('claude mcp list', { encoding: 'utf-8', timeout: 5000, env: getCliEnv() }).trim()
+  if (mcpResult.status === 'fulfilled') {
+    const raw = mcpResult.value.stdout.trim()
     if (raw) mcpServers = raw.split('\n').filter(Boolean)
-  } catch {}
+  }
 
-  return { version, auth, mcpServers, projectPath: process.cwd(), homePath: require('os').homedir() }
+  return { version, auth, mcpServers, projectPath: process.cwd(), homePath: homedir() }
 })
 
 ipcMain.handle(IPC.CREATE_TAB, () => {
