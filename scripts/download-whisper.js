@@ -50,11 +50,19 @@ function downloadFile(url, dest) {
  * Fetch JSON from a URL using curl (no user input — URL is a constant).
  */
 function fetchJson(url) {
-  const result = execFileSync('curl', ['-sL', '-H', 'User-Agent: clui-cc', url], {
+  const headers = ['-H', 'User-Agent: clui-cc']
+  if (process.env.GITHUB_TOKEN) {
+    headers.push('-H', `Authorization: token ${process.env.GITHUB_TOKEN}`)
+  }
+  const result = execFileSync('curl', ['-sL', ...headers, url], {
     encoding: 'utf-8',
     timeout: 30000,
   })
-  return JSON.parse(result)
+  const json = JSON.parse(result)
+  if (json.message) {
+    throw new Error(`GitHub API error: ${json.message}`)
+  }
+  return json
 }
 
 function downloadWhisperBinary() {
