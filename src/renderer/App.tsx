@@ -1,11 +1,12 @@
-import React, { useEffect, useCallback } from 'react'
+import React, { useEffect, useCallback, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paperclip, Camera, HeadCircuit } from '@phosphor-icons/react'
+import { Paperclip, Camera, HeadCircuit, ChartBar, Brain, Broadcast } from '@phosphor-icons/react'
 import { TabStrip } from './components/TabStrip'
 import { ConversationView } from './components/ConversationView'
 import { InputBar } from './components/InputBar'
 import { StatusBar } from './components/StatusBar'
 import { MarketplacePanel } from './components/MarketplacePanel'
+import { UsagePanel } from './components/UsagePanel'
 import { PopoverLayerProvider } from './components/PopoverLayer'
 import { useClaudeEvents } from './hooks/useClaudeEvents'
 import { useHealthReconciliation } from './hooks/useHealthReconciliation'
@@ -61,22 +62,31 @@ export default function App() {
   useEffect(() => {
     if (!window.clui?.setIgnoreMouseEvents) return
     let lastIgnored: boolean | null = null
+    let rafId: number | null = null
+    let lastX = 0, lastY = 0
 
     const onMouseMove = (e: MouseEvent) => {
-      const el = document.elementFromPoint(e.clientX, e.clientY)
-      const isUI = !!(el && el.closest('[data-clui-ui]'))
-      const shouldIgnore = !isUI
-      if (shouldIgnore !== lastIgnored) {
-        lastIgnored = shouldIgnore
-        if (shouldIgnore) {
-          window.clui.setIgnoreMouseEvents(true, { forward: true })
-        } else {
-          window.clui.setIgnoreMouseEvents(false)
+      lastX = e.clientX
+      lastY = e.clientY
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        const el = document.elementFromPoint(lastX, lastY)
+        const isUI = !!(el && el.closest('[data-clui-ui]'))
+        const shouldIgnore = !isUI
+        if (shouldIgnore !== lastIgnored) {
+          lastIgnored = shouldIgnore
+          if (shouldIgnore) {
+            window.clui.setIgnoreMouseEvents(true, { forward: true })
+          } else {
+            window.clui.setIgnoreMouseEvents(false)
+          }
         }
-      }
+      })
     }
 
     const onMouseLeave = () => {
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
       if (lastIgnored !== true) {
         lastIgnored = true
         window.clui.setIgnoreMouseEvents(true, { forward: true })
@@ -86,13 +96,56 @@ export default function App() {
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseleave', onMouseLeave)
     return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseleave', onMouseLeave)
     }
   }, [])
 
+  // ─── Shift+Tab cycles permission modes (Plan → Ask → Auto → Bypass) ───
+  useEffect(() => {
+    const PERM_CYCLE: Array<'plan' | 'ask' | 'auto' | 'bypass'> = ['plan', 'ask', 'auto', 'bypass']
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault()
+        const cur = useSessionStore.getState().permissionMode
+        const idx = PERM_CYCLE.indexOf(cur as any)
+        const next = PERM_CYCLE[(idx + 1) % PERM_CYCLE.length]
+        useSessionStore.getState().setPermissionMode(next)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // ─── Window show/hide animation ───
+  const [windowVisible, setWindowVisible] = useState(false)
+
+  useEffect(() => {
+    // Animate in on first render (window is being shown)
+    requestAnimationFrame(() => setWindowVisible(true))
+
+    const unsubShow = window.clui.onWindowShown(() => {
+      setWindowVisible(true)
+    })
+
+    const unsubHide = window.clui.onAnimateHide(() => {
+      // Immediately release mouse capture so desktop stays clickable
+      window.clui.setIgnoreMouseEvents(true, { forward: true })
+      setWindowVisible(false)
+      // Wait for exit animation to finish, then actually hide
+      setTimeout(() => window.clui.hideWindow(), 150)
+    })
+
+    return () => { unsubShow(); unsubHide() }
+  }, [])
+
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
+  const usagePanelOpen = useSessionStore((s) => s.usagePanelOpen)
+  const thinkingEnabled = useSessionStore((s) => s.thinkingEnabled)
+  const activeTab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
+  const remoteEnabled = activeTab?.remoteEnabled ?? false
   const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
 
   // Layout dimensions — expandedUI widens and heightens the panel
@@ -119,7 +172,15 @@ export default function App() {
       <div className="flex flex-col justify-end h-full" style={{ background: 'transparent' }}>
 
         {/* ─── 460px content column, centered. Circles overflow left. ─── */}
-        <div style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)' }}>
+        <motion.div
+          initial={{ opacity: 0, y: 24, scale: 0.97 }}
+          animate={windowVisible
+            ? { opacity: 1, y: 0, scale: 1 }
+            : { opacity: 0, y: 18, scale: 0.97 }
+          }
+          transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
+          style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)' }}
+        >
 
           <AnimatePresence initial={false}>
             {marketplaceOpen && (
@@ -150,6 +211,41 @@ export default function App() {
                     }}
                   >
                     <MarketplacePanel />
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence initial={false}>
+            {usagePanelOpen && (
+              <div
+                data-clui-ui
+                style={{
+                  width: 720,
+                  maxWidth: 720,
+                  marginLeft: '50%',
+                  transform: 'translateX(-50%)',
+                  marginBottom: 14,
+                  position: 'relative',
+                  zIndex: 30,
+                }}
+              >
+                <motion.div
+                  initial={{ opacity: 0, y: 14, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.985 }}
+                  transition={TRANSITION}
+                >
+                  <div
+                    data-clui-ui
+                    className="glass-surface overflow-hidden no-drag"
+                    style={{
+                      borderRadius: 24,
+                      maxHeight: 350,
+                    }}
+                  >
+                    <UsagePanel />
                   </div>
                 </motion.div>
               </div>
@@ -231,7 +327,7 @@ export default function App() {
                 >
                   <Camera size={17} />
                 </button>
-                {/* btn-3: Skills (back, leftmost) */}
+                {/* btn-3: Skills (middle-back) */}
                 <button
                   className="stack-btn stack-btn-3 glass-surface"
                   title="Skills & Plugins"
@@ -239,6 +335,14 @@ export default function App() {
                   disabled={isRunning}
                 >
                   <HeadCircuit size={17} />
+                </button>
+                {/* btn-4: Usage (back, leftmost) */}
+                <button
+                  className="stack-btn stack-btn-4 glass-surface"
+                  title="Session Usage"
+                  onClick={() => useSessionStore.getState().toggleUsagePanel()}
+                >
+                  <ChartBar size={17} />
                 </button>
               </div>
             </div>
@@ -251,8 +355,45 @@ export default function App() {
             >
               <InputBar />
             </div>
+
+            {/* Right-side toggles — mirrored stack (same pattern as left) */}
+            <div data-clui-ui className="circles-out-right">
+              <div className="btn-stack-right">
+                {/* btn-r1: Thinking (front, leftmost) */}
+                <button
+                  className="stack-btn stack-btn-r1 glass-surface"
+                  title={thinkingEnabled ? 'Extended thinking ON' : 'Extended thinking OFF'}
+                  onClick={() => {
+                    const next = !useSessionStore.getState().thinkingEnabled
+                    useSessionStore.setState({ thinkingEnabled: next })
+                    window.clui.saveSettings({ thinkingEnabled: next })
+                  }}
+                  style={thinkingEnabled ? { color: colors.accent } : undefined}
+                >
+                  <Brain size={17} weight={thinkingEnabled ? 'fill' : 'regular'} />
+                </button>
+                {/* btn-r2: Remote control (behind, rightmost) */}
+                <button
+                  className="stack-btn stack-btn-r2 glass-surface"
+                  title={remoteEnabled ? 'Remote control ON' : 'Remote control OFF'}
+                  onClick={() => {
+                    const s = useSessionStore.getState()
+                    const tabId = s.activeTabId
+                    const tab = s.tabs.find((t) => t.id === tabId)
+                    if (!tab) return
+                    const next = !tab.remoteEnabled
+                    useSessionStore.setState((prev) => ({
+                      tabs: prev.tabs.map((t) => t.id === tabId ? { ...t, remoteEnabled: next } : t),
+                    }))
+                  }}
+                  style={remoteEnabled ? { color: colors.accent } : undefined}
+                >
+                  <Broadcast size={17} weight={remoteEnabled ? 'fill' : 'regular'} />
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        </motion.div>
       </div>
     </PopoverLayerProvider>
   )

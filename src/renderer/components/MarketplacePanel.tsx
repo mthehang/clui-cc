@@ -34,7 +34,7 @@ export function MarketplacePanel() {
     const sorted = [...tagCounts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([tag]) => tag)
-    return ['All', ...sorted, 'Installed']
+    return ['All', ...sorted]
   }, [catalog])
 
   // Debounced search
@@ -89,6 +89,20 @@ export function MarketplacePanel() {
     return [...before, expanded, ...after]
   }, [filtered, expandedId])
 
+  // Inject scoped scrollbar styles once
+  const scrollbarCss = useMemo(() => {
+    const track = 'transparent'
+    const thumb = colors.accent + '44'       // ~27% opacity
+    const thumbHover = colors.accent + '77'  // ~47% opacity
+    return `
+      .mp-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+      .mp-scroll::-webkit-scrollbar-track { background: ${track}; border-radius: 4px; }
+      .mp-scroll::-webkit-scrollbar-thumb { background: ${thumb}; border-radius: 4px; }
+      .mp-scroll::-webkit-scrollbar-thumb:hover { background: ${thumbHover}; }
+      .mp-scroll::-webkit-scrollbar-corner { background: ${track}; }
+    `
+  }, [colors.accent])
+
   return (
     <div
       data-clui-ui
@@ -98,6 +112,8 @@ export function MarketplacePanel() {
         flexDirection: 'column',
       }}
     >
+      {/* Scoped scrollbar styles — CSS from internal theme colors, no user input */}
+      <style dangerouslySetInnerHTML={{ __html: scrollbarCss }} />
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -151,8 +167,31 @@ export function MarketplacePanel() {
         </div>
       </div>
 
-      {/* Search + Build your own */}
+      {/* Installed + Search + Build your own */}
       <div style={{ padding: '12px 18px 10px', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button
+          onClick={() => setFilter(filter === 'Installed' ? 'All' : 'Installed')}
+          style={{
+            flexShrink: 0,
+            height: 36,
+            padding: '0 12px',
+            borderRadius: 9999,
+            border: `1px solid ${filter === 'Installed' ? colors.accent : colors.containerBorder}`,
+            background: filter === 'Installed' ? colors.accentLight : 'transparent',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            transition: 'all 0.15s',
+            color: filter === 'Installed' ? colors.accent : colors.textSecondary,
+            fontSize: 11,
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Installed
+        </button>
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -204,13 +243,12 @@ export function MarketplacePanel() {
         </button>
       </div>
 
-      {/* Filter chips */}
-      <div style={{
+      {/* Filter chips — horizontally scrollable */}
+      <div className="mp-scroll" style={{
         display: 'flex',
         gap: 8,
         padding: '0 18px 12px',
         overflowX: 'auto',
-        scrollbarWidth: 'none',
       }}>
         {filters.map((f) => (
           <button
@@ -236,7 +274,7 @@ export function MarketplacePanel() {
       </div>
 
       {/* Body */}
-      <div ref={scrollContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '0 18px', scrollbarWidth: 'thin' }}>
+      <div ref={scrollContainerRef} className="mp-scroll" style={{ flex: 1, overflowY: 'auto', padding: '0 18px' }}>
         {loading ? (
           <LoadingState colors={colors} />
         ) : error ? (

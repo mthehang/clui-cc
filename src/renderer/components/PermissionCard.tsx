@@ -1,6 +1,6 @@
 import React from 'react'
 import { motion } from 'framer-motion'
-import { ShieldWarning, Terminal, PencilSimple, Globe, Wrench } from '@phosphor-icons/react'
+import { ShieldWarning, Terminal, PencilSimple, Globe, Wrench, Question } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useColors } from '../theme'
 import type { PermissionRequest } from '../../shared/types'
@@ -48,10 +48,15 @@ export function PermissionCard({ tabId, permission, queueLength = 1 }: Props) {
   const respondPermission = useSessionStore((s) => s.respondPermission)
   const colors = useColors()
   const [responded, setResponded] = React.useState(false)
+  const [customAnswer, setCustomAnswer] = React.useState('')
+
+  const isQuestion = permission.toolTitle === 'AskUserQuestion'
+  const questionText = isQuestion ? String(permission.toolInput?.question || '') : ''
 
   // Reset responded flag when the displayed permission changes (queue advancing)
   React.useEffect(() => {
     setResponded(false)
+    setCustomAnswer('')
   }, [permission.questionId])
 
   const handleOption = (optionId: string) => {
@@ -60,7 +65,14 @@ export function PermissionCard({ tabId, permission, queueLength = 1 }: Props) {
     respondPermission(tabId, permission.questionId, optionId)
   }
 
-  const inputPreview = formatInput(permission.toolInput)
+  const handleCustomAnswer = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = customAnswer.trim()
+    if (!trimmed || responded) return
+    handleOption(`answer:${trimmed}`)
+  }
+
+  const inputPreview = isQuestion ? null : formatInput(permission.toolInput)
 
   return (
     <motion.div
@@ -73,7 +85,7 @@ export function PermissionCard({ tabId, permission, queueLength = 1 }: Props) {
       <div
         style={{
           background: colors.containerBg,
-          border: `1px solid ${colors.permissionBorder}`,
+          border: `1px solid ${isQuestion ? colors.accentBorderMedium : colors.permissionBorder}`,
           borderRadius: 12,
           boxShadow: colors.permissionShadow,
         }}
@@ -83,45 +95,91 @@ export function PermissionCard({ tabId, permission, queueLength = 1 }: Props) {
         <div
           className="flex items-center gap-1.5 px-3 py-1.5"
           style={{
-            background: colors.permissionHeaderBg,
-            borderBottom: `1px solid ${colors.permissionHeaderBorder}`,
+            background: isQuestion ? colors.accentLight : colors.permissionHeaderBg,
+            borderBottom: `1px solid ${isQuestion ? colors.accentBorder : colors.permissionHeaderBorder}`,
           }}
         >
-          <ShieldWarning size={12} style={{ color: colors.statusPermission }} />
-          <span className="text-[11px] font-semibold" style={{ color: colors.statusPermission }}>
-            Permission Required
-          </span>
+          {isQuestion ? (
+            <>
+              <Question size={12} style={{ color: colors.accent }} />
+              <span className="text-[11px] font-semibold" style={{ color: colors.accent }}>
+                Claude is asking
+              </span>
+            </>
+          ) : (
+            <>
+              <ShieldWarning size={12} style={{ color: colors.statusPermission }} />
+              <span className="text-[11px] font-semibold" style={{ color: colors.statusPermission }}>
+                Permission Required
+              </span>
+            </>
+          )}
         </div>
 
         <div className="px-3 py-2.5">
-          <div className="flex items-center gap-1.5 mb-1">
-            <span style={{ color: colors.textTertiary }}>{getToolIcon(permission.toolTitle)}</span>
-            <span className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-              {permission.toolTitle}
-            </span>
-          </div>
-
-          {permission.toolDescription && (
-            <p className="text-[11px] leading-[1.4] mb-1.5" style={{ color: colors.textSecondary }}>
-              {permission.toolDescription}
+          {isQuestion ? (
+            /* AskUserQuestion: show question text prominently */
+            <p className="text-[12px] leading-[1.5] mb-2" style={{ color: colors.textPrimary }}>
+              {questionText}
             </p>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5 mb-1">
+                <span style={{ color: colors.textTertiary }}>{getToolIcon(permission.toolTitle)}</span>
+                <span className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
+                  {permission.toolTitle}
+                </span>
+              </div>
+
+              {permission.toolDescription && (
+                <p className="text-[11px] leading-[1.4] mb-1.5" style={{ color: colors.textSecondary }}>
+                  {permission.toolDescription}
+                </p>
+              )}
+
+              {inputPreview && (
+                <pre
+                  className="text-[10px] leading-[1.4] px-2 py-1.5 rounded-md overflow-x-auto whitespace-pre-wrap break-all mb-2"
+                  style={{
+                    background: colors.codeBg,
+                    color: colors.textSecondary,
+                    maxHeight: 80,
+                  }}
+                >
+                  {inputPreview}
+                </pre>
+              )}
+            </>
           )}
 
-          {inputPreview && (
-            <pre
-              className="text-[10px] leading-[1.4] px-2 py-1.5 rounded-md overflow-x-auto whitespace-pre-wrap break-all mb-2"
-              style={{
-                background: colors.codeBg,
-                color: colors.textSecondary,
-                maxHeight: 80,
-              }}
-            >
-              {inputPreview}
-            </pre>
-          )}
-
+          {/* Option buttons */}
           <div className="flex items-center gap-2 flex-wrap">
             {permission.options.map((opt) => {
+              // For AskUserQuestion, all options are neutral (not allow/deny styled)
+              if (isQuestion) {
+                return (
+                  <button
+                    key={opt.optionId}
+                    onClick={() => handleOption(opt.optionId)}
+                    disabled={responded}
+                    className="text-[11px] font-medium px-3 py-1.5 rounded-full transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      background: colors.accentLight,
+                      color: colors.accent,
+                      border: `1px solid ${colors.accentBorder}`,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!responded) e.currentTarget.style.background = colors.accentSoft
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!responded) e.currentTarget.style.background = colors.accentLight
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              }
+
               const isAllow = opt.kind === 'allow' || opt.label.toLowerCase().includes('allow')
                 || opt.label.toLowerCase().includes('yes')
               const isDeny = opt.kind === 'deny' || opt.label.toLowerCase().includes('deny')
@@ -184,6 +242,39 @@ export function PermissionCard({ tabId, permission, queueLength = 1 }: Props) {
               </span>
             )}
           </div>
+
+          {/* AskUserQuestion: free-text input for custom answer */}
+          {isQuestion && (
+            <form onSubmit={handleCustomAnswer} className="mt-2 flex gap-1.5">
+              <input
+                type="text"
+                value={customAnswer}
+                onChange={(e) => setCustomAnswer(e.target.value)}
+                placeholder="Type a response..."
+                disabled={responded}
+                className="flex-1 text-[11px] px-2.5 py-1.5 rounded-lg outline-none transition-colors disabled:opacity-40"
+                style={{
+                  background: colors.surfacePrimary,
+                  color: colors.textPrimary,
+                  border: `1px solid ${colors.containerBorder}`,
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = colors.accent }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = colors.containerBorder }}
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={responded || !customAnswer.trim()}
+                className="text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: colors.accent,
+                  color: colors.textOnAccent,
+                }}
+              >
+                Send
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </motion.div>

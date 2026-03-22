@@ -5,12 +5,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lcoutodemos/clui-cc.git"
+    "url": "https://github.com/mthehang/clui-cc.git"
   },
   "bugs": {
-    "url": "https://github.com/lcoutodemos/clui-cc/issues"
+    "url": "https://github.com/mthehang/clui-cc/issues"
   },
-  "homepage": "https://github.com/lcoutodemos/clui-cc#readme",
+  "homepage": "https://github.com/mthehang/clui-cc#readme",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -18,12 +18,14 @@
     "preview": "electron-vite preview",
     "dist": "electron-vite build --mode production && electron-builder --dir",
     "dist:mac": "electron-vite build --mode production && electron-builder --mac --dir",
-    "dist:win": "electron-vite build --mode production && electron-builder --win --dir",
+    "dist:win": "node scripts/download-whisper.js && electron-vite build --mode production && electron-builder --win",
+    "dist:win:publish": "node scripts/download-whisper.js && electron-vite build --mode production && electron-builder --win --publish always",
     "doctor": "node scripts/doctor.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
+    "electron-updater": "^6.8.3",
     "framer-motion": "^12.35.1",
     "node-pty": "^1.1.0",
     "react-markdown": "^9.0.0",
@@ -32,6 +34,11 @@
   },
   "build": {
     "appId": "com.clui.app",
+    "publish": {
+      "provider": "github",
+      "owner": "mthehang",
+      "repo": "clui-cc"
+    },
     "productName": "Clui CC",
     "directories": {
       "output": "release"
@@ -54,8 +61,27 @@
     "win": {
       "icon": "resources/icon.ico",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/whisper/",
+          "to": "whisper",
+          "filter": [
+            "**/*"
+          ]
+        }
       ]
     },
     "nsis": {
@@ -63,7 +89,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Clui CC"
+      "shortcutName": "Clui CC",
+      "license": "resources/license.txt",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico"
     }
   },
   "devDependencies": {

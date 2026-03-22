@@ -1,16 +1,23 @@
-import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, clipboard, desktopCapturer } from 'electron'
 import { join } from 'path'
-import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
+import { existsSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync } from 'fs'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
 import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
-import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
+import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin, scanLocalSkills } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
 import { IS_MAC, IS_WIN, isAbsolutePath, getIconPath, encodeProjectPath, findBinaryInPath } from './platform'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
+import type { RunOptions, NormalizedEvent, EnrichedError, AppSettings, CloudUsageResponse, UsageBarData } from '../shared/types'
+import { initAutoUpdater, checkForUpdate, downloadUpdate, installUpdate } from './updater'
+
+// Windows: disable hardware acceleration entirely to prevent system freeze on startup.
+// transparent: true + DWM layered window composition causes DXGI to stall the GPU pipeline.
+if (IS_WIN) {
+  app.disableHardwareAcceleration()
+}
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
 const SPACES_DEBUG = DEBUG_MODE || process.env.CLUI_SPACES_DEBUG === '1'
@@ -29,11 +36,52 @@ const INTERACTIVE_PTY = process.env.CLUI_INTERACTIVE_PERMISSIONS_PTY === '1'
 
 const controlPlane = new ControlPlane(INTERACTIVE_PTY)
 
-// Keep native width fixed to avoid renderer animation vs setBounds race.
-// The UI itself still launches in compact mode; extra width is transparent/click-through.
-const BAR_WIDTH = 1040
-const PILL_HEIGHT = 720  // Fixed native window height — extra room for expanded UI + shadow buffers
-const PILL_BOTTOM_MARGIN = 24
+// ─── Settings Persistence ───
+
+const DEFAULT_SETTINGS: AppSettings = {
+  shortcut: null,
+  zoomLevel: 1.0,
+  autoStart: false,
+  startHidden: false,
+  permissionMode: 'ask',
+  effortLevel: null,
+  planMode: false,
+  secondaryShortcut: null,
+  transcriptionShortcut: null,
+  thinkingEnabled: true,
+  remoteEnabled: false,
+  responseLanguage: 'auto',
+  globalRules: '',
+  whisperModel: 'tiny',
+  whisperLanguage: 'auto',
+  whisperDevice: 'cpu',
+}
+
+let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
+
+function getSettingsPath(): string {
+  return join(app.getPath('userData'), 'settings.json')
+}
+
+function loadSettings(): AppSettings {
+  try {
+    const raw = readFileSync(getSettingsPath(), 'utf-8')
+    const parsed = JSON.parse(raw)
+    currentSettings = { ...DEFAULT_SETTINGS, ...parsed }
+  } catch {
+    currentSettings = { ...DEFAULT_SETTINGS }
+  }
+  return currentSettings
+}
+
+function saveSettings(partial: Partial<AppSettings>): void {
+  currentSettings = { ...currentSettings, ...partial }
+  try {
+    writeFileSync(getSettingsPath(), JSON.stringify(currentSettings, null, 2), 'utf-8')
+  } catch (err: any) {
+    log(`Failed to save settings: ${err.message}`)
+  }
+}
 
 // ─── Broadcast to renderer ───
 
@@ -96,20 +144,16 @@ controlPlane.on('error', (tabId: string, error: EnrichedError) => {
 function createWindow(): void {
   const cursor = screen.getCursorScreenPoint()
   const display = screen.getDisplayNearestPoint(cursor)
-  const { width: screenWidth, height: screenHeight } = display.workAreaSize
-  const { x: dx, y: dy } = display.workArea
-
-  const x = dx + Math.round((screenWidth - BAR_WIDTH) / 2)
-  const y = dy + screenHeight - PILL_HEIGHT - PILL_BOTTOM_MARGIN
+  const { x, y, width, height } = display.workArea
 
   mainWindow = new BrowserWindow({
-    width: BAR_WIDTH,
-    height: PILL_HEIGHT,
+    width,
+    height,
     x,
     y,
     ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),  // NSPanel — non-activating, joins all spaces
     frame: false,
-    titleBarStyle: 'hidden',
+    ...(IS_MAC ? { titleBarStyle: 'hidden' as const } : {}),
     title: '',
     transparent: true,
     resizable: false,
@@ -160,6 +204,11 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // Initialize auto-updater (only in packaged builds)
+  if (app.isPackaged) {
+    initAutoUpdater(mainWindow)
+  }
 }
 
 function showWindow(source = 'unknown'): void {
@@ -169,14 +218,8 @@ function showWindow(source = 'unknown'): void {
   // Position on the display where the cursor currently is (not always primary)
   const cursor = screen.getCursorScreenPoint()
   const display = screen.getDisplayNearestPoint(cursor)
-  const { width: sw, height: sh } = display.workAreaSize
-  const { x: dx, y: dy } = display.workArea
-  mainWindow.setBounds({
-    x: dx + Math.round((sw - BAR_WIDTH) / 2),
-    y: dy + sh - PILL_HEIGHT - PILL_BOTTOM_MARGIN,
-    width: BAR_WIDTH,
-    height: PILL_HEIGHT,
-  })
+  const { x: dx, y: dy, width: dw, height: dh } = display.workArea
+  mainWindow.setBounds({ x: dx, y: dy, width: dw, height: dh })
 
   // Always re-assert space membership — the flag can be lost after hide/show cycles
   // and must be set before show() so the window joins the active Space, not its
@@ -206,7 +249,8 @@ function toggleWindow(source = 'unknown'): void {
   }
 
   if (mainWindow.isVisible()) {
-    mainWindow.hide()
+    // Tell renderer to play exit animation, then it calls hideWindow()
+    mainWindow.webContents.send('clui:animate-hide')
     if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'hide')
   } else {
     showWindow(source)
@@ -215,7 +259,7 @@ function toggleWindow(source = 'unknown'): void {
 
 // ─── Resize ───
 // Fixed-height mode: ignore renderer resize events to prevent jank.
-// The native window stays at PILL_HEIGHT; all expand/collapse happens inside the renderer.
+// The native window covers the full workArea; all expand/collapse happens inside the renderer.
 
 ipcMain.on(IPC.RESIZE_HEIGHT, () => {
   // No-op — fixed height window, no dynamic resize
@@ -340,12 +384,309 @@ ipcMain.handle(IPC.CLOSE_TAB, (_event, tabId: string) => {
 })
 
 ipcMain.on(IPC.SET_PERMISSION_MODE, (_event, mode: string) => {
-  if (mode !== 'ask' && mode !== 'auto') {
+  if (mode !== 'ask' && mode !== 'auto' && mode !== 'bypass') {
     log(`IPC SET_PERMISSION_MODE: invalid mode "${mode}" — ignoring`)
     return
   }
   log(`IPC SET_PERMISSION_MODE: ${mode}`)
-  controlPlane.setPermissionMode(mode)
+  controlPlane.setPermissionMode(mode as 'ask' | 'auto' | 'bypass')
+  saveSettings({ permissionMode: mode as AppSettings['permissionMode'] })
+})
+
+ipcMain.on(IPC.SET_ZOOM, (_event, level: number) => {
+  if (typeof level !== 'number' || level < 0.5 || level > 2.0) return
+  mainWindow?.webContents.setZoomFactor(level)
+  saveSettings({ zoomLevel: level })
+})
+
+// ── Editable global shortcut ──
+const DEFAULT_SHORTCUT = IS_MAC ? 'Alt+Space' : 'Ctrl+Alt+Space'
+let currentPrimaryShortcut = DEFAULT_SHORTCUT
+
+ipcMain.on(IPC.SET_SHORTCUT, (_event, accelerator: string | null) => {
+  const newShortcut = (typeof accelerator === 'string' && accelerator.length > 0) ? accelerator : DEFAULT_SHORTCUT
+  if (newShortcut === currentPrimaryShortcut) return
+  try { globalShortcut.unregister(currentPrimaryShortcut) } catch { /* ignore */ }
+  const ok = globalShortcut.register(newShortcut, () => toggleWindow(`shortcut ${newShortcut}`))
+  if (ok) {
+    log(`Shortcut changed: ${currentPrimaryShortcut} → ${newShortcut}`)
+    currentPrimaryShortcut = newShortcut
+    saveSettings({ shortcut: newShortcut === DEFAULT_SHORTCUT ? null : newShortcut })
+  } else {
+    log(`Failed to register shortcut ${newShortcut}, reverting to ${currentPrimaryShortcut}`)
+    globalShortcut.register(currentPrimaryShortcut, () => toggleWindow(`shortcut ${currentPrimaryShortcut}`))
+  }
+})
+
+// ── Secondary shortcut ──
+let currentSecondaryShortcut: string | null = null
+
+ipcMain.on(IPC.SET_SECONDARY_SHORTCUT, (_event, accelerator: string | null) => {
+  // Unregister old secondary
+  if (currentSecondaryShortcut) {
+    try { globalShortcut.unregister(currentSecondaryShortcut) } catch { /* ignore */ }
+  }
+  if (typeof accelerator === 'string' && accelerator.length > 0) {
+    const ok = globalShortcut.register(accelerator, () => toggleWindow(`shortcut ${accelerator}`))
+    if (ok) {
+      log(`Secondary shortcut set: ${accelerator}`)
+      currentSecondaryShortcut = accelerator
+    } else {
+      log(`Failed to register secondary shortcut ${accelerator}`)
+      currentSecondaryShortcut = null
+    }
+  } else {
+    currentSecondaryShortcut = null
+  }
+  saveSettings({ secondaryShortcut: currentSecondaryShortcut })
+})
+
+// ── Transcription shortcut ──
+let currentTranscriptionShortcut: string | null = null
+
+ipcMain.on(IPC.SET_TRANSCRIPTION_SHORTCUT, (_event, accelerator: string | null) => {
+  if (currentTranscriptionShortcut) {
+    try { globalShortcut.unregister(currentTranscriptionShortcut) } catch { /* ignore */ }
+  }
+  if (typeof accelerator === 'string' && accelerator.length > 0) {
+    const ok = globalShortcut.register(accelerator, () => {
+      // Show window if hidden, then toggle transcription
+      if (mainWindow && !mainWindow.isVisible()) {
+        mainWindow.show()
+        mainWindow.webContents.focus()
+        broadcast(IPC.WINDOW_SHOWN)
+      }
+      broadcast(IPC.TOGGLE_TRANSCRIPTION)
+    })
+    if (ok) {
+      log(`Transcription shortcut set: ${accelerator}`)
+      currentTranscriptionShortcut = accelerator
+    } else {
+      log(`Failed to register transcription shortcut ${accelerator}`)
+      currentTranscriptionShortcut = null
+    }
+  } else {
+    currentTranscriptionShortcut = null
+  }
+  saveSettings({ transcriptionShortcut: currentTranscriptionShortcut })
+})
+
+// ── Whisper model management ──
+const WHISPER_MODEL_IDS = ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo']
+
+function getWhisperDir(): string {
+  if (IS_MAC) return join(homedir(), '.local', 'share', 'whisper')
+  return join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'clui-cc', 'whisper')
+}
+
+ipcMain.handle(IPC.LIST_WHISPER_MODELS, () => {
+  const dir = getWhisperDir()
+  const result: Record<string, boolean> = {}
+  for (const id of WHISPER_MODEL_IDS) {
+    const file = join(dir, `ggml-${id}.bin`)
+    result[id] = existsSync(file)
+  }
+  return result
+})
+
+ipcMain.handle(IPC.DOWNLOAD_WHISPER_MODEL, async (_event, model: string) => {
+  if (typeof model !== 'string' || !WHISPER_MODEL_IDS.includes(model)) {
+    return { ok: false, error: 'Invalid model' }
+  }
+  const dir = getWhisperDir()
+  const file = join(dir, `ggml-${model}.bin`)
+  if (existsSync(file)) return { ok: true } // already downloaded
+  try {
+    const { mkdirSync } = require('fs')
+    mkdirSync(dir, { recursive: true })
+    const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin`
+    log(`Downloading whisper model: ${model} from ${url}`)
+    const { execFile } = require('child_process')
+    await new Promise<void>((resolve, reject) => {
+      execFile('curl', ['-L', '--fail', '-o', file, url], { timeout: 600000 }, (err: any) => {
+        if (err) reject(err); else resolve()
+      })
+    })
+    if (existsSync(file)) {
+      log(`Whisper model downloaded: ${model}`)
+      return { ok: true }
+    }
+    return { ok: false, error: 'Download completed but file not found' }
+  } catch (err: any) {
+    log(`Whisper model download failed: ${err.message}`)
+    // Clean up partial download
+    try { require('fs').unlinkSync(file) } catch { /* ignore */ }
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle(IPC.DELETE_WHISPER_MODEL, (_event, model: string) => {
+  if (typeof model !== 'string' || !WHISPER_MODEL_IDS.includes(model)) {
+    return { ok: false, error: 'Invalid model' }
+  }
+  const file = join(getWhisperDir(), `ggml-${model}.bin`)
+  try {
+    if (existsSync(file)) {
+      require('fs').unlinkSync(file)
+      log(`Whisper model deleted: ${model}`)
+    }
+    return { ok: true }
+  } catch (err: any) {
+    return { ok: false, error: err.message }
+  }
+})
+
+// ── Settings + Usage IPC ──
+
+ipcMain.handle(IPC.GET_SETTINGS, () => currentSettings)
+
+ipcMain.on(IPC.SAVE_SETTINGS, (_event, partial: Partial<AppSettings>) => {
+  if (!partial || typeof partial !== 'object') return
+  saveSettings(partial)
+  // Apply auto-start changes immediately
+  if ('autoStart' in partial || 'startHidden' in partial) {
+    app.setLoginItemSettings({
+      openAtLogin: currentSettings.autoStart,
+      openAsHidden: currentSettings.startHidden,
+    })
+    log(`Auto-start updated: openAtLogin=${currentSettings.autoStart}, openAsHidden=${currentSettings.startHidden}`)
+  }
+})
+
+// ── Auto-update IPC ──
+
+ipcMain.handle(IPC.GET_APP_VERSION, () => app.getVersion())
+ipcMain.handle(IPC.CHECK_FOR_UPDATE, () => { checkForUpdate(); return true })
+ipcMain.handle(IPC.DOWNLOAD_UPDATE, () => { downloadUpdate(); return true })
+ipcMain.handle(IPC.INSTALL_UPDATE, () => { installUpdate(); return true })
+
+// ── Cloud Usage (claude.ai-style bars) ──
+
+let usageCache: { data: CloudUsageResponse; fetchedAt: number } | null = null
+const USAGE_CACHE_TTL = 5 * 60 * 1000 // 5 min
+
+ipcMain.handle(IPC.FETCH_USAGE, async (_event, opts?: { forceRefresh?: boolean }) => {
+  const force = opts?.forceRefresh === true
+  if (!force && usageCache && Date.now() - usageCache.fetchedAt < USAGE_CACHE_TTL) {
+    return usageCache.data
+  }
+
+  // Try reading OAuth credentials from ~/.claude/.credentials.json
+  const credPath = join(homedir(), '.claude', '.credentials.json')
+  let accessToken: string | null = null
+  let orgId: string | null = null
+  let subscriptionType: string | null = null
+
+  try {
+    const creds = JSON.parse(readFileSync(credPath, 'utf-8'))
+    accessToken = creds?.claudeAiOauth?.accessToken || null
+    orgId = creds?.organizationUuid || null
+    subscriptionType = creds?.claudeAiOauth?.subscriptionType || null
+  } catch {
+    log('FETCH_USAGE: no credentials found')
+  }
+
+  // Try fetching from claude.ai API
+  if (accessToken && orgId) {
+    try {
+      const { net } = await import('electron')
+      const url = `https://claude.ai/api/organizations/${orgId}/usage`
+      const response = await net.fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'anthropic-client-platform': 'web',
+          'User-Agent': 'CluiCC/1.0',
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json() as any
+        const bars: UsageBarData[] = []
+
+        // Parse the response — adapt to claude.ai API shape
+        if (data?.daily_usage || data?.usage) {
+          const usage = data.daily_usage || data.usage || data
+          // Session/daily limit
+          if (usage.daily_limit !== undefined || usage.message_limit !== undefined) {
+            bars.push({
+              label: 'Sessao atual',
+              current: usage.daily_used ?? usage.messages_used ?? 0,
+              limit: usage.daily_limit ?? usage.message_limit ?? 100,
+              unit: 'messages',
+              resetsAt: usage.daily_resets_at ?? usage.resets_at ?? null,
+            })
+          }
+          // Weekly/all models
+          if (usage.weekly_limit !== undefined) {
+            bars.push({
+              label: 'Todos os modelos',
+              current: usage.weekly_used ?? 0,
+              limit: usage.weekly_limit ?? 100,
+              unit: 'messages',
+              resetsAt: usage.weekly_resets_at ?? null,
+            })
+          }
+        }
+
+        // If we got structured rate limit data
+        if (Array.isArray(data?.rate_limits)) {
+          for (const rl of data.rate_limits) {
+            bars.push({
+              label: rl.label || rl.type || 'Limite',
+              current: rl.used ?? rl.current ?? 0,
+              limit: rl.limit ?? rl.max ?? 100,
+              unit: rl.unit || 'requests',
+              resetsAt: rl.resets_at ?? rl.resetsAt ?? null,
+            })
+          }
+        }
+
+        // If API returned data but we couldn't parse bars, add raw percentage if available
+        if (bars.length === 0 && typeof data === 'object') {
+          // Try common field patterns
+          for (const key of Object.keys(data)) {
+            const val = data[key]
+            if (val && typeof val === 'object' && ('used' in val || 'current' in val) && ('limit' in val || 'max' in val)) {
+              bars.push({
+                label: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+                current: val.used ?? val.current ?? 0,
+                limit: val.limit ?? val.max ?? 100,
+                unit: val.unit || 'units',
+                resetsAt: val.resets_at ?? val.resetsAt ?? null,
+              })
+            }
+          }
+        }
+
+        const result: CloudUsageResponse = {
+          bars,
+          lastUpdated: Date.now(),
+          source: 'cloud',
+          error: bars.length === 0 ? 'API returned data but no recognizable usage bars' : null,
+          subscriptionType,
+        }
+        usageCache = { data: result, fetchedAt: Date.now() }
+        log(`FETCH_USAGE: cloud success, ${bars.length} bars`)
+        return result
+      }
+
+      log(`FETCH_USAGE: API returned ${response.status}`)
+    } catch (err: any) {
+      log(`FETCH_USAGE: cloud fetch failed — ${err.message}`)
+    }
+  }
+
+  // Fallback: local-only data
+  const result: CloudUsageResponse = {
+    bars: [],
+    lastUpdated: Date.now(),
+    source: 'local',
+    error: accessToken ? 'Nao foi possivel acessar a API do claude.ai' : 'Credenciais nao encontradas',
+    subscriptionType,
+  }
+  usageCache = { data: result, fetchedAt: Date.now() }
+  return result
 })
 
 ipcMain.handle(IPC.RESPOND_PERMISSION, (_event, { tabId, questionId, optionId }: { tabId: string; questionId: string; optionId: string }) => {
@@ -508,6 +849,12 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
   }
 })
 
+ipcMain.handle(IPC.LIST_LOCAL_SKILLS, async () => {
+  try {
+    return await scanLocalSkills()
+  } catch { return [] }
+})
+
 ipcMain.handle(IPC.SELECT_DIRECTORY, async () => {
   if (!mainWindow) return null
   // macOS: activate app so unparented dialog appears on top (not behind other apps).
@@ -588,6 +935,16 @@ ipcMain.handle(IPC.ATTACH_FILES, async () => {
   })
 })
 
+// Transparent overlay HTML for screenshot selection (crosshair + orange dashed rect)
+const SCREENSHOT_OVERLAY_HTML = `<!DOCTYPE html><html><head><style>*{margin:0;padding:0}html,body{width:100vw;height:100vh;overflow:hidden;background:transparent;cursor:crosshair;user-select:none;-webkit-user-select:none}canvas{position:fixed;top:0;left:0;width:100vw;height:100vh}</style></head><body><canvas id="c"></canvas><script>
+const c=document.getElementById('c'),g=c.getContext('2d'),D=devicePixelRatio||1;c.width=innerWidth*D;c.height=innerHeight*D;g.scale(D,D);
+let sx,sy,ex,ey,dr=false;
+function p(){const W=innerWidth,H=innerHeight;g.clearRect(0,0,W,H);g.fillStyle='rgba(0,0,0,0.18)';g.fillRect(0,0,W,H);if(!dr)return;const rx=Math.min(sx,ex),ry=Math.min(sy,ey),rw=Math.abs(ex-sx),rh=Math.abs(ey-sy);g.save();g.beginPath();g.rect(0,0,W,H);g.rect(rx,ry,rw,rh);g.clip('evenodd');g.fillStyle='rgba(0,0,0,0.35)';g.fillRect(0,0,W,H);g.restore();g.clearRect(rx,ry,rw,rh);g.strokeStyle='#f97316';g.lineWidth=2;g.setLineDash([6,4]);g.strokeRect(rx+1,ry+1,rw-2,rh-2);if(rw>50&&rh>25){const l=Math.round(rw)+'\\u00d7'+Math.round(rh);g.font='12px system-ui';g.setLineDash([]);const m=g.measureText(l),lx=rx+rw/2-m.width/2,ly=ry+rh+20;g.fillStyle='rgba(0,0,0,0.75)';g.beginPath();g.roundRect(lx-6,ly-13,m.width+12,18,4);g.fill();g.fillStyle='#fff';g.fillText(l,lx,ly)}}p();setTimeout(()=>window.focus(),50);document.oncontextmenu=e=>e.preventDefault();
+c.onmousedown=e=>{window.focus();sx=ex=e.clientX;sy=ey=e.clientY;dr=true};c.onmousemove=e=>{if(dr){ex=e.clientX;ey=e.clientY;p()}};
+c.onmouseup=e=>{if(!dr)return;dr=false;ex=e.clientX;ey=e.clientY;const w=Math.abs(ex-sx),h=Math.abs(ey-sy);if(w<5||h<5){console.log('{"a":"x"}');return}console.log(JSON.stringify({a:'ok',r:{x:Math.round(Math.min(sx,ex)),y:Math.round(Math.min(sy,ey)),w:Math.round(w),h:Math.round(h)}}))};
+document.onkeydown=e=>{if(e.key==='Escape')console.log('{"a":"x"}')};
+</script></body></html>`
+
 ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {
   if (!mainWindow) return null
 
@@ -597,31 +954,72 @@ ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {
 
   try {
     if (IS_WIN) {
-      // Windows: use Electron desktopCapturer API
-      const { desktopCapturer } = require('electron')
-      const { writeFileSync } = require('fs')
-      const { tmpdir } = require('os')
-      const { join } = require('path')
+      // Windows: transparent overlay selection + desktopCapturer crop
+      const displays = screen.getAllDisplays()
+      const overlays: BrowserWindow[] = []
+      const selection = await new Promise<{ di: number; r: { x: number; y: number; w: number; h: number } } | null>((resolve) => {
+        let done = false
+        for (let i = 0; i < displays.length; i++) {
+          const d = displays[i]
+          const ow = new BrowserWindow({
+            x: d.bounds.x, y: d.bounds.y,
+            width: d.bounds.width, height: d.bounds.height,
+            transparent: true, frame: false, alwaysOnTop: true,
+            skipTaskbar: true, resizable: false, movable: false,
+            hasShadow: false, show: false, focusable: true,
+            webPreferences: { nodeIntegration: false, contextIsolation: true },
+          })
+          ow.setAlwaysOnTop(true, 'screen-saver')
+          const idx = i
+          ow.webContents.on('console-message', (_ev: any, _lvl: any, msg: string) => {
+            if (done) return
+            try {
+              const data = JSON.parse(msg)
+              if (data.a === 'ok') { done = true; resolve({ di: idx, r: data.r }) }
+              else if (data.a === 'x') { done = true; resolve(null) }
+            } catch {}
+          })
+          ow.once('closed', () => { if (!done) { done = true; resolve(null) } })
+          ow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(SCREENSHOT_OVERLAY_HTML)}`)
+          ow.once('ready-to-show', () => ow.show())
+          overlays.push(ow)
+        }
+      })
 
+      for (const ow of overlays) { if (!ow.isDestroyed()) ow.close() }
+      if (!selection) return null
+
+      // Wait for OS to finish removing overlay windows from screen buffer
+      await new Promise((r) => setTimeout(r, 200))
+
+      const td = displays[selection.di]
+      const sf = td.scaleFactor || 1
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
-        thumbnailSize: screen.getPrimaryDisplay().workAreaSize,
+        thumbnailSize: { width: Math.ceil(td.bounds.width * sf), height: Math.ceil(td.bounds.height * sf) },
       })
-      if (sources.length > 0) {
-        const buf = sources[0].thumbnail.toPNG()
-        const tmpPath = join(tmpdir(), `clui-screenshot-${Date.now()}.png`)
-        writeFileSync(tmpPath, buf)
-        return {
-          id: crypto.randomUUID(),
-          type: 'image',
-          name: `screenshot ${++screenshotCounter}.png`,
-          path: tmpPath,
-          mimeType: 'image/png',
-          dataUrl: `data:image/png;base64,${buf.toString('base64')}`,
-          size: buf.length,
-        }
+      const source = sources.find((s: any) => s.display_id === String(td.id)) || sources[selection.di] || sources[0]
+      if (!source || source.thumbnail.isEmpty()) return null
+
+      const cropped = source.thumbnail.crop({
+        x: Math.round(selection.r.x * sf), y: Math.round(selection.r.y * sf),
+        width: Math.round(selection.r.w * sf), height: Math.round(selection.r.h * sf),
+      })
+      const buf = cropped.toPNG()
+      const { writeFileSync } = require('fs')
+      const { tmpdir } = require('os')
+      const { join: joinPath } = require('path')
+      const tmpPath = joinPath(tmpdir(), `clui-screenshot-${Date.now()}.png`)
+      writeFileSync(tmpPath, buf)
+      return {
+        id: crypto.randomUUID(),
+        type: 'image',
+        name: `screenshot ${++screenshotCounter}.png`,
+        path: tmpPath,
+        mimeType: 'image/png',
+        dataUrl: `data:image/png;base64,${buf.toString('base64')}`,
+        size: buf.length,
       }
-      throw new Error('No screen sources available')
     }
 
     // macOS: use native screencapture with interactive selection
@@ -733,12 +1131,21 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     t0 = Date.now()
     let whisperBin = ''
 
+    const whisperLocalDir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'clui-cc', 'whisper')
+
     if (IS_WIN) {
-      // Windows: use findBinaryInPath for whisper-cli (whisper.cpp) and whisper (Python)
-      // WhisperKit is Apple Silicon only — not available on Windows
-      for (const name of ['whisper-cli', 'whisper']) {
-        const found = findBinaryInPath(name)
-        if (found) { whisperBin = found; break }
+      // Windows: check bundled → user-local → PATH
+      const bundledBin = join(process.resourcesPath || '', 'whisper', 'whisper-cli.exe')
+      const localBin = join(whisperLocalDir, 'whisper-cli.exe')
+      if (existsSync(bundledBin)) {
+        whisperBin = bundledBin
+      } else if (existsSync(localBin)) {
+        whisperBin = localBin
+      } else {
+        for (const name of ['whisper-cli', 'whisper']) {
+          const found = findBinaryInPath(name)
+          if (found) { whisperBin = found; break }
+        }
       }
     } else {
       // macOS: check well-known Homebrew paths first
@@ -769,15 +1176,59 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       mark('probe_binary_whence', t0)
     }
 
+    if (!whisperBin && IS_WIN) {
+      // Auto-download whisper binary + model on first use
+      log('Whisper not found — auto-downloading to ' + whisperLocalDir)
+      try {
+        const { mkdirSync, unlinkSync, renameSync, rmSync } = require('fs')
+        const { execFileSync } = require('child_process')
+        mkdirSync(whisperLocalDir, { recursive: true })
+
+        const localBin = join(whisperLocalDir, 'whisper-cli.exe')
+        if (!existsSync(localBin)) {
+          const releaseJson = execFileSync('curl', ['-sL', '-H', 'User-Agent: clui-cc', 'https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest'], { encoding: 'utf-8', timeout: 30000 })
+          const release = JSON.parse(releaseJson)
+          const asset = release.assets.find((a: any) => { const n = a.name.toLowerCase(); return n.includes('win') && n.includes('x64') && n.endsWith('.zip') && !n.includes('cuda') && !n.includes('vulkan') && !n.includes('openvino') })
+            || release.assets.find((a: any) => { const n = a.name.toLowerCase(); return n.includes('bin-x64') && n.endsWith('.zip') })
+          if (asset) {
+            const zipPath = join(whisperLocalDir, 'whisper.zip')
+            execFileSync('curl', ['-L', '--fail', '-o', zipPath, asset.browser_download_url], { stdio: 'ignore', timeout: 600000 })
+            const listing = execFileSync('tar', ['-tf', zipPath], { encoding: 'utf-8' })
+            const entries = listing.split(/\r?\n/).filter(Boolean)
+            const binEntry = entries.find((e: string) => e.endsWith('whisper-cli.exe')) || entries.find((e: string) => e.endsWith('main.exe'))
+            if (binEntry) {
+              execFileSync('tar', ['-xf', zipPath, '-C', whisperLocalDir, binEntry], { stdio: 'ignore' })
+              const extracted = join(whisperLocalDir, binEntry)
+              if (extracted !== localBin && existsSync(extracted)) renameSync(extracted, localBin)
+            }
+            // Extract DLLs
+            for (const dll of entries.filter((e: string) => e.endsWith('.dll'))) {
+              try {
+                execFileSync('tar', ['-xf', zipPath, '-C', whisperLocalDir, dll], { stdio: 'ignore' })
+                const de = join(whisperLocalDir, dll), dd = join(whisperLocalDir, require('path').basename(dll))
+                if (de !== dd && existsSync(de)) renameSync(de, dd)
+              } catch {}
+            }
+            // Clean nested dirs
+            for (const entry of readdirSync(whisperLocalDir)) {
+              const full = join(whisperLocalDir, entry)
+              if (statSync(full).isDirectory()) rmSync(full, { recursive: true, force: true })
+            }
+            try { unlinkSync(zipPath) } catch {}
+          }
+        }
+        if (existsSync(localBin)) whisperBin = localBin
+      } catch (dlErr: any) {
+        log(`Whisper auto-download failed: ${dlErr.message}`)
+      }
+    }
+
     if (!whisperBin) {
-      let hint: string
-      if (IS_WIN) {
-        hint = 'Install whisper.cpp: winget install ggerganov.whisper.cpp — or download from https://github.com/ggerganov/whisper.cpp/releases'
-      } else {
-        hint = process.arch === 'arm64'
+      const hint = IS_WIN
+        ? 'Auto-download failed. Install manually: winget install ggerganov.whisper.cpp'
+        : process.arch === 'arm64'
           ? 'brew install whisperkit-cli   (or: brew install whisper-cpp)'
           : 'brew install whisper-cpp'
-      }
       return {
         error: `Whisper not found. Install with:\n  ${hint}`,
         transcript: null,
@@ -787,7 +1238,12 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     const isWhisperKit = !IS_WIN && whisperBin.includes('whisperkit-cli')
     const isWhisperCpp = !isWhisperKit && whisperBin.includes('whisper-cli')
 
-    log(`Transcribing with: ${whisperBin} (backend: ${isWhisperKit ? 'WhisperKit' : isWhisperCpp ? 'whisper-cpp' : 'Python whisper'})`)
+    // Read whisper settings
+    const wSettings = loadSettings()
+    const wModel = wSettings.whisperModel || 'tiny'
+    const wLang = wSettings.whisperLanguage || 'auto'
+
+    log(`Transcribing with: ${whisperBin} (backend: ${isWhisperKit ? 'WhisperKit' : isWhisperCpp ? 'whisper-cpp' : 'Python whisper'}, model: ${wModel}, lang: ${wLang})`)
 
     let output: string
     if (isWhisperKit) {
@@ -797,7 +1253,7 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       t0 = Date.now()
       output = await runExecFile(
         whisperBin,
-        ['transcribe', '--audio-path', tmpWav, '--model', 'tiny', '--without-timestamps', '--skip-special-tokens', '--report', '--report-path', reportDir],
+        ['transcribe', '--audio-path', tmpWav, '--model', wModel, '--without-timestamps', '--skip-special-tokens', '--report', '--report-path', reportDir, ...(wLang !== 'auto' ? ['--language', wLang] : [])],
         60000
       )
       mark('whisperkit_transcribe_report', t0)
@@ -829,35 +1285,32 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
         t0 = Date.now()
         output = await runExecFile(
           whisperBin,
-          ['transcribe', '--audio-path', tmpWav, '--model', 'tiny', '--without-timestamps', '--skip-special-tokens'],
+          ['transcribe', '--audio-path', tmpWav, '--model', wModel, '--without-timestamps', '--skip-special-tokens', ...(wLang !== 'auto' ? ['--language', wLang] : [])],
           60000
         )
         mark('whisperkit_transcribe_stdout_rerun', t0)
       }
     } else if (isWhisperCpp) {
       // whisper-cpp: whisper-cli -m model -f file --no-timestamps
-      // Find model file — prefer multilingual (auto-detect language) over .en (English-only)
+      // Find model file — check user-selected model first, then fallback to any available
+      const modelFile = `ggml-${wModel}.bin`
       const modelCandidates = [
-        join(homedir(), '.local/share/whisper/ggml-base.bin'),
-        join(homedir(), '.local/share/whisper/ggml-tiny.bin'),
+        // Bundled model (highest priority)
+        join(process.resourcesPath || '', 'whisper', modelFile),
+        // Auto-downloaded model (user-local)
+        join(whisperLocalDir, modelFile),
+        join(homedir(), '.local/share/whisper', modelFile),
         ...(IS_WIN ? [
-          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-base.bin'),
-          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-tiny.bin'),
-          join(homedir(), 'whisper.cpp', 'models', 'ggml-base.bin'),
-          join(homedir(), 'whisper.cpp', 'models', 'ggml-tiny.bin'),
+          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', modelFile),
+          join(homedir(), 'whisper.cpp', 'models', modelFile),
         ] : [
-          '/opt/homebrew/share/whisper-cpp/models/ggml-base.bin',
-          '/opt/homebrew/share/whisper-cpp/models/ggml-tiny.bin',
+          `/opt/homebrew/share/whisper-cpp/models/${modelFile}`,
         ]),
-        join(homedir(), '.local/share/whisper/ggml-base.en.bin'),
-        join(homedir(), '.local/share/whisper/ggml-tiny.en.bin'),
-        ...(IS_WIN ? [
-          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-base.en.bin'),
-          join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'whisper-cpp', 'models', 'ggml-tiny.en.bin'),
-        ] : [
-          '/opt/homebrew/share/whisper-cpp/models/ggml-base.en.bin',
-          '/opt/homebrew/share/whisper-cpp/models/ggml-tiny.en.bin',
-        ]),
+        // Fallback: try tiny if selected model not found
+        ...(wModel !== 'tiny' ? [
+          join(whisperLocalDir, 'ggml-tiny.bin'),
+          join(process.resourcesPath || '', 'whisper', 'ggml-tiny.bin'),
+        ] : []),
       ]
 
       let modelPath = ''
@@ -865,9 +1318,11 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
         if (existsSync(m)) { modelPath = m; break }
       }
 
+      // No more sync auto-download — models are downloaded from Settings
+
       if (!modelPath) {
         const downloadHint = IS_WIN
-          ? 'Whisper model not found. Download with:\n  mkdir "%LOCALAPPDATA%\\whisper-cpp\\models" & curl -L -o "%LOCALAPPDATA%\\whisper-cpp\\models\\ggml-tiny.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
+          ? 'Auto-download failed. Download manually:\n  curl -L -o "%LOCALAPPDATA%\\clui-cc\\whisper\\ggml-tiny.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
           : 'Whisper model not found. Download with:\n  mkdir -p ~/.local/share/whisper && curl -L -o ~/.local/share/whisper/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
         return {
           error: downloadHint,
@@ -876,12 +1331,12 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       }
 
       const isEnglishOnly = modelPath.includes('.en.')
-      const langFlag = isEnglishOnly ? '-l en' : '-l auto'
+      const effectiveLang = isEnglishOnly ? 'en' : (wLang === 'auto' ? 'auto' : wLang)
       t0 = Date.now()
       output = await runExecFile(
         whisperBin,
-        ['-m', modelPath, '-f', tmpWav, '--no-timestamps', '-l', isEnglishOnly ? 'en' : 'auto'],
-        30000
+        ['-m', modelPath, '-f', tmpWav, '--no-timestamps', '-l', effectiveLang],
+        60000
       )
       mark('whisper_cpp_transcribe', t0)
     } else {
@@ -889,7 +1344,7 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       t0 = Date.now()
       output = await runExecFile(
         whisperBin,
-        [tmpWav, '--model', 'tiny', '--output_format', 'txt', '--output_dir', tmpdir()],
+        [tmpWav, '--model', 'tiny', '--output_format', 'txt', '--output_dir', tmpdir(), ...(wLang !== 'auto' ? ['--language', wLang] : [])],
         30000
       )
       mark('python_whisper_transcribe', t0)
@@ -1104,6 +1559,21 @@ app.whenReady().then(async () => {
     app.dock.hide()
   }
 
+  // Load persisted settings before creating anything
+  loadSettings()
+  log(`Settings loaded: ${JSON.stringify(currentSettings)}`)
+
+  // Apply auto-start
+  app.setLoginItemSettings({
+    openAtLogin: currentSettings.autoStart,
+    openAsHidden: currentSettings.startHidden,
+  })
+
+  // Apply saved permission mode
+  if (currentSettings.permissionMode && currentSettings.permissionMode !== 'ask') {
+    controlPlane.setPermissionMode(currentSettings.permissionMode)
+  }
+
   // Request permissions upfront so the user is never interrupted mid-session.
   await requestPermissions()
 
@@ -1115,6 +1585,13 @@ app.whenReady().then(async () => {
 
   createWindow()
   snapshotWindowState('after createWindow')
+
+  // Apply saved zoom level
+  if (currentSettings.zoomLevel && currentSettings.zoomLevel !== 1.0) {
+    mainWindow?.webContents.once('did-finish-load', () => {
+      mainWindow?.webContents.setZoomFactor(currentSettings.zoomLevel)
+    })
+  }
 
   if (SPACES_DEBUG) {
     mainWindow?.on('show', () => snapshotWindowState('event window show'))
@@ -1142,14 +1619,41 @@ app.whenReady().then(async () => {
   }
 
 
-  // Primary: Option+Space on macOS, Ctrl+Alt+Space on Windows (2–3 keys, doesn't conflict with shell/IME)
-  // Fallback: Cmd+Shift+K / Ctrl+Shift+K kept as secondary shortcut
-  const toggleShortcut = IS_MAC ? 'Alt+Space' : 'Ctrl+Alt+Space'
+  // Use saved shortcut if persisted, otherwise default
+  const toggleShortcut = currentSettings.shortcut || (IS_MAC ? 'Alt+Space' : 'Ctrl+Alt+Space')
+  currentPrimaryShortcut = toggleShortcut
   const registered = globalShortcut.register(toggleShortcut, () => toggleWindow(`shortcut ${toggleShortcut}`))
   if (!registered) {
     log(`${toggleShortcut} shortcut registration failed — ${IS_MAC ? 'macOS input sources may claim it' : 'another app may have registered it'}`)
   }
-  globalShortcut.register('CommandOrControl+Shift+K', () => toggleWindow('shortcut Cmd/Ctrl+Shift+K'))
+  // Secondary shortcut: use saved or disabled by default
+  const savedSecondary = currentSettings.secondaryShortcut
+  if (savedSecondary) {
+    const secOk = globalShortcut.register(savedSecondary, () => toggleWindow(`shortcut ${savedSecondary}`))
+    if (secOk) {
+      currentSecondaryShortcut = savedSecondary
+    } else {
+      log(`Secondary shortcut ${savedSecondary} registration failed`)
+    }
+  }
+
+  // Transcription shortcut: use saved or disabled by default
+  const savedTranscription = currentSettings.transcriptionShortcut
+  if (savedTranscription) {
+    const transOk = globalShortcut.register(savedTranscription, () => {
+      if (mainWindow && !mainWindow.isVisible()) {
+        mainWindow.show()
+        mainWindow.webContents.focus()
+        broadcast(IPC.WINDOW_SHOWN)
+      }
+      broadcast(IPC.TOGGLE_TRANSCRIPTION)
+    })
+    if (transOk) {
+      currentTranscriptionShortcut = savedTranscription
+    } else {
+      log(`Transcription shortcut ${savedTranscription} registration failed`)
+    }
+  }
 
   const trayIconPath = join(__dirname, '../../resources/trayTemplate.png')
   const trayIcon = nativeImage.createFromPath(trayIconPath)

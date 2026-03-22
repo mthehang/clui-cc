@@ -1,13 +1,13 @@
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, X } from '@phosphor-icons/react'
+import { Plus, X, Broadcast } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { HistoryPicker } from './HistoryPicker'
 import { SettingsPopover } from './SettingsPopover'
 import { useColors } from '../theme'
 import type { TabStatus } from '../../shared/types'
 
-function StatusDot({ status, hasUnread, hasPermission }: { status: TabStatus; hasUnread: boolean; hasPermission: boolean }) {
+function StatusDot({ status, hasUnread, hasPermission, permissionCount }: { status: TabStatus; hasUnread: boolean; hasPermission: boolean; permissionCount: number }) {
   const colors = useColors()
   let bg: string = colors.statusIdle
   let pulse = false
@@ -26,13 +26,26 @@ function StatusDot({ status, hasUnread, hasPermission }: { status: TabStatus; ha
   }
 
   return (
-    <span
-      className={`w-[6px] h-[6px] rounded-full flex-shrink-0 ${pulse ? 'animate-pulse-dot' : ''}`}
-      style={{
-        background: bg,
-        ...(glow ? { boxShadow: `0 0 6px 2px ${colors.statusPermissionGlow}` } : {}),
-      }}
-    />
+    <span className="relative flex-shrink-0 flex items-center">
+      <span
+        className={`w-[8px] h-[8px] rounded-full ${pulse ? 'animate-pulse-dot' : ''}`}
+        style={{
+          background: bg,
+          ...(glow ? { boxShadow: `0 0 8px 3px ${colors.statusPermissionGlow}` } : {}),
+        }}
+      />
+      {hasPermission && permissionCount > 0 && (
+        <span
+          className="absolute -top-1.5 -right-2 min-w-[12px] h-[12px] flex items-center justify-center rounded-full text-[7px] font-bold leading-none"
+          style={{
+            background: colors.statusPermission,
+            color: '#fff',
+          }}
+        >
+          {permissionCount > 9 ? '9+' : permissionCount}
+        </span>
+      )}
+    </span>
   )
 }
 
@@ -88,8 +101,11 @@ export function TabStrip() {
                     fontWeight: isActive ? 500 : 400,
                   }}
                 >
-                  <StatusDot status={tab.status} hasUnread={tab.hasUnread} hasPermission={tab.permissionQueue.length > 0} />
+                  <StatusDot status={tab.status} hasUnread={tab.hasUnread} hasPermission={tab.permissionQueue.length > 0} permissionCount={tab.permissionQueue.length} />
                   <span className="truncate flex-1">{tab.title}</span>
+                  {tab.remoteEnabled && (
+                    <Broadcast size={10} weight="fill" style={{ color: colors.accent, flexShrink: 0 }} />
+                  )}
                   {tabs.length > 1 && (
                     <button
                       onClick={(e) => { e.stopPropagation(); closeTab(tab.id) }}

@@ -11,6 +11,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
 import { useColors, useThemeStore } from '../theme'
+import { InlineDiff } from './InlineDiff'
 import type { Message } from '../../shared/types'
 
 // ─── Constants ───
@@ -283,9 +284,22 @@ export function ConversationView() {
 
 // ─── Empty State (directory picker before first message) ───
 
+function formatAccelerator(acc: string): string {
+  const isMac = navigator.platform?.includes('Mac')
+  if (isMac) {
+    return acc.replace('Ctrl', '⌃').replace('Alt', '⌥').replace('Shift', '⇧').replace('Meta', '⌘').replace(/\+/g, ' ')
+  }
+  return acc
+}
+
 function EmptyState() {
   const setBaseDirectory = useSessionStore((s) => s.setBaseDirectory)
+  const customShortcut = useThemeStore((s) => s.customShortcut)
   const colors = useColors()
+
+  const isMac = navigator.platform?.includes('Mac')
+  const defaultDisplay = isMac ? '⌥ Space' : 'Ctrl+Alt+Space'
+  const shortcutDisplay = customShortcut ? formatAccelerator(customShortcut) : defaultDisplay
 
   const handleChooseFolder = async () => {
     const dir = await window.clui.selectDirectory()
@@ -313,7 +327,7 @@ function EmptyState() {
         Choose folder
       </button>
       <span className="text-[11px]" style={{ color: colors.textTertiary }}>
-        Press <strong style={{ color: colors.textSecondary }}>⌥ + Space</strong> to show/hide this overlay
+        Press <strong style={{ color: colors.textSecondary }}>{shortcutDisplay}</strong> to show/hide this overlay
       </span>
     </div>
   )
@@ -737,6 +751,13 @@ function ToolGroup({ tools, skipMotion }: { tools: Message[]; skipMotion?: boole
                       <span className="text-[10px] mt-0.5 block" style={{ color: colors.textMuted }}>
                         running...
                       </span>
+                    )}
+
+                    {/* Inline diff for Edit/Write tools */}
+                    {!isRunning && tool.toolInput && (toolName === 'Edit' || toolName === 'Write') && (
+                      <div className="mt-1.5">
+                        <InlineDiff toolInput={tool.toolInput} />
+                      </div>
                     )}
                   </div>
                 </div>

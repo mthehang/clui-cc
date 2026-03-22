@@ -71,8 +71,8 @@ export class ControlPlane extends EventEmitter {
   private permissionServer: PermissionServer
   /** Per-run tokens: requestId → runToken (for cleanup on exit/error) */
   private runTokens = new Map<string, string>()
-  /** Global permission mode: 'ask' shows cards, 'auto' auto-approves */
-  private permissionMode: 'ask' | 'auto' = 'ask'
+  /** Global permission mode: 'ask' shows cards, 'auto' auto-approves, 'bypass' bypasses all */
+  private permissionMode: 'ask' | 'auto' | 'bypass' = 'ask'
   /** Resolves when the permission server is ready (or failed). Dispatch awaits this. */
   private hookServerReady: Promise<void>
 
@@ -107,9 +107,9 @@ export class ControlPlane extends EventEmitter {
 
       log(`Permission request [${questionId}]: tool=${toolRequest.tool_name} tab=${tabId.substring(0, 8)}… mode=${this.permissionMode}`)
 
-      // Auto mode: immediately allow without showing UI
-      if (this.permissionMode === 'auto') {
-        this.permissionServer.respondToPermission(questionId, 'allow', 'Auto mode')
+      // Auto/bypass mode: immediately allow without showing UI
+      if (this.permissionMode === 'auto' || this.permissionMode === 'bypass') {
+        this.permissionServer.respondToPermission(questionId, 'allow', `${this.permissionMode} mode`)
         return
       }
 
@@ -482,7 +482,7 @@ export class ControlPlane extends EventEmitter {
    * Set global permission mode.
    * 'ask' = show permission cards, 'auto' = auto-approve all tool calls.
    */
-  setPermissionMode(mode: 'ask' | 'auto'): void {
+  setPermissionMode(mode: 'ask' | 'auto' | 'bypass'): void {
     log(`Permission mode set to: ${mode}`)
     this.permissionMode = mode
   }
@@ -596,6 +596,9 @@ export class ControlPlane extends EventEmitter {
     if (tab.claudeSessionId && !options.sessionId) {
       options = { ...options, sessionId: tab.claudeSessionId }
     }
+
+    // Inject global permission mode into run options
+    options = { ...options, permissionMode: this.permissionMode }
 
     // Per-run token lifecycle: register run, generate per-run settings file
     if (this.permissionServer.getPort()) {

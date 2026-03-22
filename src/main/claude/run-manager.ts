@@ -115,14 +115,24 @@ export class RunManager extends EventEmitter {
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
-      '--permission-mode', 'default',
     ]
+
+    const cliPerm = options.permissionMode === 'bypass' ? 'bypassPermissions'
+      : options.permissionMode === 'auto' ? 'autoApprove'
+      : 'default' // 'ask' and 'plan' both map to 'default'
+    args.push('--permission-mode', cliPerm)
 
     if (options.sessionId) {
       args.push('--resume', options.sessionId)
     }
     if (options.model) {
       args.push('--model', options.model)
+    }
+    if (options.thinkingBudget) {
+      args.push('--thinking', `budget:${options.thinkingBudget}`)
+    }
+    if (options.remoteEnabled) {
+      args.push('--rc')
     }
     if (options.addDirs && options.addDirs.length > 0) {
       for (const dir of options.addDirs) {
@@ -156,7 +166,7 @@ export class RunManager extends EventEmitter {
       args.push('--max-budget-usd', String(options.maxBudgetUsd))
     }
     if (options.systemPrompt) {
-      args.push('--system-prompt', options.systemPrompt)
+      args.push('--append-system-prompt', options.systemPrompt)
     }
     // Always tell Claude it's inside CLUI (additive, doesn't replace base prompt)
     args.push('--append-system-prompt', CLUI_SYSTEM_HINT)
