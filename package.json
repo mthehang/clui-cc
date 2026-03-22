@@ -37,7 +37,8 @@
     "publish": {
       "provider": "github",
       "owner": "mthehang",
-      "repo": "clui-cc"
+      "repo": "clui-cc",
+      "releaseType": "release"
     },
     "productName": "Clui CC",
     "directories": {
