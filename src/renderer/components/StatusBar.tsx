@@ -5,7 +5,7 @@ import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck, Keyboard,
 import type { IconWeight } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
-import { useColors } from '../theme'
+import { useColors, useThemeStore } from '../theme'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
@@ -442,6 +442,8 @@ export function StatusBar() {
   )
   const addDirectory = useSessionStore((s) => s.addDirectory)
   const removeDirectory = useSessionStore((s) => s.removeDirectory)
+  const expandedUI = useThemeStore((s) => s.expandedUI)
+  const compact = !expandedUI
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
@@ -517,7 +519,7 @@ export function StatusBar() {
           disabled={isRunning}
         >
           <FolderOpen size={11} className="flex-shrink-0" />
-          <span className="truncate">{tab.hasChosenDirectory ? compactPath(tab.workingDirectory) : '—'}</span>
+          {!compact && <span className="truncate">{tab.hasChosenDirectory ? compactPath(tab.workingDirectory) : '—'}</span>}
           {hasExtraDirs && (
             <span style={{ color: colors.textTertiary, fontWeight: 600 }}>+{tab.additionalDirs.length}</span>
           )}
@@ -618,17 +620,19 @@ export function StatusBar() {
             style={{ color: colors.textTertiary, opacity: 0.7 }}
             title={`Input: ${formatTokenCount(tab.cumulativeUsage.totalInputTokens)} / Output: ${formatTokenCount(tab.cumulativeUsage.totalOutputTokens)}`}
           >
-            {formatTokenCount(tab.cumulativeUsage.totalInputTokens + tab.cumulativeUsage.totalOutputTokens)} tok
+            {formatTokenCount(tab.cumulativeUsage.totalInputTokens + tab.cumulativeUsage.totalOutputTokens)}{!compact && ' tok'}
           </span>
         )}
-        <span
-          className="text-[10px] flex items-center gap-1 opacity-60"
-          style={{ color: colors.textTertiary }}
-          title={navigator.platform?.includes('Mac') ? 'Toggle: ⌥Space or ⌘⇧K' : 'Toggle: Ctrl+Alt+Space or Ctrl+Shift+K'}
-        >
-          <Keyboard size={10} />
-          {navigator.platform?.includes('Mac') ? '⌥Space' : 'Ctrl+Alt+Space'}
-        </span>
+        {!compact && (
+          <span
+            className="text-[10px] flex items-center gap-1 opacity-60"
+            style={{ color: colors.textTertiary }}
+            title={navigator.platform?.includes('Mac') ? 'Toggle: ⌥Space or ⌘⇧K' : 'Toggle: Ctrl+Alt+Space or Ctrl+Shift+K'}
+          >
+            <Keyboard size={10} />
+            {navigator.platform?.includes('Mac') ? '⌥Space' : 'Ctrl+Alt+Space'}
+          </span>
+        )}
         <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
         <button
           onClick={handleOpenInTerminal}
@@ -636,7 +640,7 @@ export function StatusBar() {
           style={{ color: colors.textTertiary }}
           title="Open this session in Terminal"
         >
-          Open in CLI
+          {!compact && 'Open in CLI'}
           <Terminal size={11} />
         </button>
       </div>

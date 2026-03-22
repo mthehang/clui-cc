@@ -56,7 +56,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   globalRules: '',
   whisperModel: 'tiny',
   whisperLanguage: 'auto',
-  whisperDevice: 'cpu',
+  whisperDevice: 'auto',
 }
 
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
@@ -1144,12 +1144,22 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
   try {
     const runExecFile = (bin: string, args: string[], timeout: number): Promise<string> =>
       new Promise((resolve, reject) => {
-        execFile(bin, args, { encoding: 'utf-8', timeout }, (err: any, stdout: string, stderr: string) => {
+        // Set cwd to binary's directory so CUDA DLLs are found
+        const cwd = require('path').dirname(bin)
+        execFile(bin, args, { encoding: 'utf-8', timeout, cwd }, (err: any, stdout: string, stderr: string) => {
+          const isDeprecationWarning = stderr?.includes('deprecated') || stderr?.includes('deprecation-warning')
+
           if (err) {
             // Whisper may exit non-zero with a deprecation warning but still produce valid output
             if (stdout?.trim()) {
               log(`whisper exited with error but produced output, using stdout. stderr: ${stderr?.trim()}`)
               resolve(stdout)
+              return
+            }
+            // Deprecation warning with no output is not a real error — resolve empty
+            if (isDeprecationWarning) {
+              log(`whisper deprecation warning only (no output), treating as empty`)
+              resolve('')
               return
             }
             const detail = stderr?.trim() || err.message
@@ -1165,6 +1175,9 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     writeFileSync(tmpWav, buf)
     mark('decode+write_wav', t0)
 
+    // Read device setting early — it affects binary detection order
+    const wDevice = loadSettings().whisperDevice || 'auto'
+
     // Find whisper backend in priority order
     t0 = Date.now()
     let whisperBin = ''
@@ -1172,19 +1185,37 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     const whisperLocalDir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'clui-cc', 'whisper')
 
     if (IS_WIN) {
-      // Windows: check bundled → user-local → PATH
-      // Try new name (whisper-whisper-cli) first, then legacy (whisper-cli)
-      for (const binName of ['whisper-whisper-cli.exe', 'whisper-cli.exe']) {
-        const bundled = join(process.resourcesPath || '', 'whisper', binName)
-        const local = join(whisperLocalDir, binName)
-        if (existsSync(bundled)) { whisperBin = bundled; break }
-        if (existsSync(local)) { whisperBin = local; break }
-      }
-      if (!whisperBin) {
+      // Windows: detection order depends on device setting
+      // GPU/Auto → prefer PATH (system-installed, may have CUDA) → bundled → local
+      // CPU → prefer bundled/local (CPU-only) → PATH
+      const preferPath = wDevice !== 'cpu'
+
+      const findInPath = (): string => {
         for (const name of ['whisper-whisper-cli', 'whisper-cli', 'whisper']) {
           const found = findBinaryInPath(name)
-          if (found) { whisperBin = found; break }
+          if (found) return found
         }
+        return ''
+      }
+
+      const MIN_REAL_BIN = 100000 // real binary >400KB; 28KB wrappers must be skipped
+      const isRealBinary = (p: string): boolean => {
+        try { return require('fs').statSync(p).size >= MIN_REAL_BIN } catch { return false }
+      }
+      const findBundledOrLocal = (): string => {
+        for (const binName of ['whisper-cli.exe', 'whisper-whisper-cli.exe']) {
+          const bundled = join(process.resourcesPath || '', 'whisper', binName)
+          const local = join(whisperLocalDir, binName)
+          if (existsSync(bundled) && isRealBinary(bundled)) return bundled
+          if (existsSync(local) && isRealBinary(local)) return local
+        }
+        return ''
+      }
+
+      if (preferPath) {
+        whisperBin = findInPath() || findBundledOrLocal()
+      } else {
+        whisperBin = findBundledOrLocal() || findInPath()
       }
     } else {
       // macOS: check well-known Homebrew paths first
@@ -1276,14 +1307,14 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     }
 
     const isWhisperKit = !IS_WIN && whisperBin.includes('whisperkit-cli')
-    const isWhisperCpp = !isWhisperKit && (whisperBin.includes('whisper-cli') || whisperBin.includes('whisper-whisper-cli'))
+    const isWhisperCpp = !isWhisperKit && (whisperBin.includes('whisper-cli') || whisperBin.includes('whisper-whisper-cli') || whisperBin.endsWith('main.exe'))
 
-    // Read whisper settings
+    // Read whisper settings (wDevice already read above for binary detection)
     const wSettings = loadSettings()
     const wModel = wSettings.whisperModel || 'tiny'
     const wLang = wSettings.whisperLanguage || 'auto'
 
-    log(`Transcribing with: ${whisperBin} (backend: ${isWhisperKit ? 'WhisperKit' : isWhisperCpp ? 'whisper-cpp' : 'Python whisper'}, model: ${wModel}, lang: ${wLang})`)
+    log(`Transcribing with: ${whisperBin} (backend: ${isWhisperKit ? 'WhisperKit' : isWhisperCpp ? 'whisper-cpp' : 'Python whisper'}, model: ${wModel}, lang: ${wLang}, device: ${wDevice})`)
 
     let output: string
     if (isWhisperKit) {
@@ -1373,9 +1404,12 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       const isEnglishOnly = modelPath.includes('.en.')
       const effectiveLang = isEnglishOnly ? 'en' : (wLang === 'auto' ? 'auto' : wLang)
       t0 = Date.now()
+      // auto/gpu: no flags (whisper uses GPU by default if compiled with CUDA/Vulkan)
+      // cpu: explicitly disable GPU
+      const deviceArgs: string[] = wDevice === 'cpu' ? ['--no-gpu'] : []
       output = await runExecFile(
         whisperBin,
-        ['-m', modelPath, '-f', tmpWav, '--no-timestamps', '-l', effectiveLang],
+        ['-m', modelPath, '-f', tmpWav, '--no-timestamps', '-l', effectiveLang, ...deviceArgs],
         60000
       )
       mark('whisper_cpp_transcribe', t0)
@@ -1428,6 +1462,25 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     }
   } finally {
     try { unlinkSync(tmpWav) } catch {}
+  }
+})
+
+ipcMain.handle(IPC.DETECT_GPU, async () => {
+  if (!IS_WIN) return { hasGpu: false, name: '' }
+  try {
+    const { execFile: ef } = require('child_process')
+    const result: string = await new Promise((resolve, reject) => {
+      ef('powershell', [
+        '-NoProfile', '-Command',
+        "Get-CimInstance Win32_VideoController | Where-Object {$_.Name -match 'NVIDIA'} | Select-Object -First 1 -ExpandProperty Name"
+      ], { encoding: 'utf-8', timeout: 5000 }, (err: any, stdout: string) => {
+        if (err) return reject(err)
+        resolve(stdout?.trim() || '')
+      })
+    })
+    return { hasGpu: !!result, name: result }
+  } catch {
+    return { hasGpu: false, name: '' }
   }
 })
 

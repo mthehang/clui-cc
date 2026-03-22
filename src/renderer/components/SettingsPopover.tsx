@@ -346,6 +346,8 @@ const WHISPER_LANGUAGES = [
 function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
   const [model, setModel] = useState('tiny')
   const [language, setLanguage] = useState('auto')
+  const [device, setDevice] = useState('auto')
+  const [gpuInfo, setGpuInfo] = useState<{ hasGpu: boolean; name: string }>({ hasGpu: false, name: '' })
   const [downloaded, setDownloaded] = useState<Record<string, boolean>>({})
 
   const refreshDownloaded = useCallback(() => {
@@ -356,8 +358,10 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
     window.clui.getSettings().then((s) => {
       setModel(s.whisperModel || 'tiny')
       setLanguage(s.whisperLanguage || 'auto')
+      setDevice(s.whisperDevice || 'auto')
     }).catch(() => {})
     refreshDownloaded()
+    window.clui.detectGpu().then(setGpuInfo).catch(() => {})
   }, [refreshDownloaded])
 
   const [downloading, setDownloading] = useState<string | null>(null)
@@ -463,6 +467,21 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             {WHISPER_LANGUAGES.map((l) => (
               <option key={l.value} value={l.value}>{l.label}</option>
             ))}
+          </select>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>Device</span>
+          <select
+            value={device}
+            onChange={(e) => { setDevice(e.target.value); window.clui.saveSettings({ whisperDevice: e.target.value }) }}
+            className="text-[11px] rounded-lg px-2 py-1 outline-none"
+            style={{ ...selectStyle, width: 140 }}
+          >
+            <option value="auto">Auto (GPU if available)</option>
+            <option value="gpu" disabled={!gpuInfo.hasGpu}>
+              {gpuInfo.hasGpu ? `GPU (${gpuInfo.name})` : 'GPU (no NVIDIA detected)'}
+            </option>
+            <option value="cpu">CPU</option>
           </select>
         </div>
     </div>

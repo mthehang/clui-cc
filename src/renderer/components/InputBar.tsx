@@ -30,6 +30,12 @@ export function InputBar() {
   const measureRef = useRef<HTMLTextAreaElement | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const [audioLevel, setAudioLevel] = useState(0)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const animFrameRef = useRef<number>(0)
+  const silenceStartRef = useRef<number>(0)
+  const frequencyDataRef = useRef<Uint8Array | null>(null)
 
   const sendMessage = useSessionStore((s) => s.sendMessage)
   const clearTab = useSessionStore((s) => s.clearTab)
@@ -350,6 +356,17 @@ export function InputBar() {
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop()
   }, [])
 
+  const cleanupAudio = useCallback(() => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+    animFrameRef.current = 0
+    setAudioLevel(0)
+    silenceStartRef.current = 0
+    frequencyDataRef.current = null
+    if (audioCtxRef.current) { try { audioCtxRef.current.close() } catch {} }
+    audioCtxRef.current = null
+    analyserRef.current = null
+  }, [])
+
   const startRecording = useCallback(async () => {
     setVoiceError(null)
     chunksRef.current = []
@@ -362,10 +379,57 @@ export function InputBar() {
       setVoiceError('Microphone permission denied.')
       return
     }
+
+    // Set up audio analysis for level monitoring + silence detection
+    const audioCtx = new AudioContext()
+    const source = audioCtx.createMediaStreamSource(stream)
+    const analyser = audioCtx.createAnalyser()
+    analyser.fftSize = 256
+    analyser.smoothingTimeConstant = 0.3
+    source.connect(analyser)
+    audioCtxRef.current = audioCtx
+    analyserRef.current = analyser
+    silenceStartRef.current = 0
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount)
+    frequencyDataRef.current = dataArray
+    const SILENCE_THRESHOLD = 0.06
+    const SILENCE_TIMEOUT = 3000
+    let hasSpoken = false
+
+    const monitorLevels = () => {
+      if (!analyserRef.current) return
+      analyserRef.current.getByteFrequencyData(dataArray)
+      // Calculate RMS-like level from frequency data (0-1 range)
+      let sum = 0
+      for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i]
+      const level = Math.sqrt(sum / dataArray.length) / 255
+      setAudioLevel(level)
+
+      // Silence detection: auto-stop after 3s of silence (only after user has spoken)
+      if (level > SILENCE_THRESHOLD) {
+        hasSpoken = true
+        silenceStartRef.current = 0
+      } else if (hasSpoken) {
+        if (!silenceStartRef.current) silenceStartRef.current = Date.now()
+        else if (Date.now() - silenceStartRef.current > SILENCE_TIMEOUT) {
+          // Auto-stop after silence
+          if (mediaRecorderRef.current?.state === 'recording') {
+            cancelledRef.current = false
+            mediaRecorderRef.current.stop()
+          }
+          return
+        }
+      }
+      animFrameRef.current = requestAnimationFrame(monitorLevels)
+    }
+    animFrameRef.current = requestAnimationFrame(monitorLevels)
+
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
     const recorder = new MediaRecorder(stream, { mimeType })
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
     recorder.onstop = async () => {
+      cleanupAudio()
       stream.getTracks().forEach((t) => t.stop())
       if (cancelledRef.current) { cancelledRef.current = false; setVoiceState('idle'); return }
       if (chunksRef.current.length === 0) { setVoiceState('idle'); return }
@@ -379,11 +443,11 @@ export function InputBar() {
       } catch (err: any) { setVoiceError(`Voice failed: ${err.message}`) }
       finally { setVoiceState('idle') }
     }
-    recorder.onerror = () => { stream.getTracks().forEach((t) => t.stop()); setVoiceError('Recording failed.'); setVoiceState('idle') }
+    recorder.onerror = () => { cleanupAudio(); stream.getTracks().forEach((t) => t.stop()); setVoiceError('Recording failed.'); setVoiceState('idle') }
     mediaRecorderRef.current = recorder
     setVoiceState('recording')
     recorder.start()
-  }, [])
+  }, [micDeviceId, cleanupAudio])
 
   const handleVoiceToggle = useCallback(() => {
     if (voiceState === 'recording') stopRecording()
@@ -426,35 +490,39 @@ export function InputBar() {
       <div className="w-full" style={{ minHeight: 50 }}>
         {isMultiLine ? (
           <div className="w-full">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                isConnecting
-                  ? 'Initializing...'
-                  : voiceState === 'recording'
-                    ? 'Recording... ✓ to confirm, ✕ to cancel'
+            {voiceState === 'recording' ? (
+              <div style={{ paddingTop: 11, paddingBottom: 2, minHeight: 50 }} className="flex items-center">
+                <AudioWaveform analyserRef={analyserRef} colors={colors} />
+              </div>
+            ) : (
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                placeholder={
+                  isConnecting
+                    ? 'Initializing...'
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
                       : isBusy
                         ? 'Type to queue a message...'
                         : 'Ask Claude Code anything...'
-              }
-              rows={1}
-              className="w-full bg-transparent resize-none"
-              style={{
-                fontSize: 14,
-                lineHeight: '20px',
-                color: colors.textPrimary,
-                minHeight: 20,
-                maxHeight: INPUT_MAX_HEIGHT,
-                paddingTop: 11,
-                paddingBottom: 2,
-              }}
-            />
+                }
+                rows={1}
+                className="w-full bg-transparent resize-none"
+                style={{
+                  fontSize: 14,
+                  lineHeight: '20px',
+                  color: colors.textPrimary,
+                  minHeight: 20,
+                  maxHeight: INPUT_MAX_HEIGHT,
+                  paddingTop: 11,
+                  paddingBottom: 2,
+                }}
+              />
+            )}
 
             <div className="flex items-center justify-end gap-1" style={{ marginTop: 0, paddingBottom: 4 }}>
               <VoiceButtons
@@ -464,6 +532,7 @@ export function InputBar() {
                 onToggle={handleVoiceToggle}
                 onCancel={cancelRecording}
                 onStop={stopRecording}
+                audioLevel={audioLevel}
               />
               <AnimatePresence>
                 {canSend && voiceState !== 'recording' && (
@@ -484,35 +553,39 @@ export function InputBar() {
           </div>
         ) : (
           <div className="flex items-center w-full" style={{ minHeight: 50 }}>
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                isConnecting
-                  ? 'Initializing...'
-                  : voiceState === 'recording'
-                    ? 'Recording... ✓ to confirm, ✕ to cancel'
+            {voiceState === 'recording' ? (
+              <div className="flex-1 flex items-center" style={{ minHeight: 20, paddingTop: 15, paddingBottom: 15 }}>
+                <AudioWaveform analyserRef={analyserRef} colors={colors} />
+              </div>
+            ) : (
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                placeholder={
+                  isConnecting
+                    ? 'Initializing...'
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
                       : isBusy
                         ? 'Type to queue a message...'
                         : 'Ask Claude Code anything...'
-              }
-              rows={1}
-              className="flex-1 bg-transparent resize-none"
-              style={{
-                fontSize: 14,
-                lineHeight: '20px',
-                color: colors.textPrimary,
-                minHeight: 20,
-                maxHeight: INPUT_MAX_HEIGHT,
-                paddingTop: 15,
-                paddingBottom: 15,
-              }}
-            />
+                }
+                rows={1}
+                className="flex-1 bg-transparent resize-none"
+                style={{
+                  fontSize: 14,
+                  lineHeight: '20px',
+                  color: colors.textPrimary,
+                  minHeight: 20,
+                  maxHeight: INPUT_MAX_HEIGHT,
+                  paddingTop: 15,
+                  paddingBottom: 15,
+                }}
+              />
+            )}
 
             <div className="flex items-center gap-1 shrink-0 ml-2">
               <VoiceButtons
@@ -522,6 +595,7 @@ export function InputBar() {
                 onToggle={handleVoiceToggle}
                 onCancel={cancelRecording}
                 onStop={stopRecording}
+                audioLevel={audioLevel}
               />
               <AnimatePresence>
                 {canSend && voiceState !== 'recording' && (
@@ -553,16 +627,265 @@ export function InputBar() {
   )
 }
 
+// ─── Audio Waveform Visualizer ───
+// Organic, flowing waveform inspired by Claude/Anthropic's warm visual language.
+// Renders layered sine-waves that respond to audio frequency data with smooth
+// interpolation, subtle gradients, and a gentle idle breathing animation.
+
+function AudioWaveform({ analyserRef, colors }: {
+  analyserRef: React.RefObject<AnalyserNode | null>
+  colors: ReturnType<typeof useColors>
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animRef = useRef<number>(0)
+  // Smoothed frequency band values persisted across frames
+  const smoothedRef = useRef<Float32Array | null>(null)
+  // Continuous phase offset for the idle breathing / wave motion
+  const phaseRef = useRef<number>(0)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // Number of frequency bands we sample for the wave shape
+    const BAND_COUNT = 64
+    // Exponential smoothing factor (0 = frozen, 1 = raw). Lower = smoother.
+    const LERP_UP = 0.18
+    const LERP_DOWN = 0.08
+
+    if (!smoothedRef.current) {
+      smoothedRef.current = new Float32Array(BAND_COUNT)
+    }
+
+    const draw = () => {
+      const analyser = analyserRef.current
+      if (!analyser || !canvas) {
+        animRef.current = requestAnimationFrame(draw)
+        return
+      }
+
+      // --- Canvas setup (HiDPI) ---
+      const dpr = window.devicePixelRatio || 1
+      const rect = canvas.getBoundingClientRect()
+      if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+        canvas.width = rect.width * dpr
+        canvas.height = rect.height * dpr
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+      const w = rect.width
+      const h = rect.height
+      ctx.clearRect(0, 0, w, h)
+
+      // --- Frequency data ---
+      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      analyser.getByteFrequencyData(dataArray)
+
+      const smoothed = smoothedRef.current!
+
+      // Map frequency bins to our band count with voice-range emphasis
+      for (let i = 0; i < BAND_COUNT; i++) {
+        const t = i / BAND_COUNT
+        // Non-linear mapping: emphasise lower/mid frequencies (voice range)
+        const freqIndex = Math.min(
+          dataArray.length - 1,
+          Math.floor(Math.pow(t, 0.7) * dataArray.length * 0.55) + 2
+        )
+        const raw = (dataArray[freqIndex] || 0) / 255
+        // Asymmetric smoothing: rise faster than fall for responsive-yet-fluid feel
+        const lerp = raw > smoothed[i] ? LERP_UP : LERP_DOWN
+        smoothed[i] += (raw - smoothed[i]) * lerp
+      }
+
+      // Advance continuous phase for organic wave drift
+      phaseRef.current += 0.025
+      const phase = phaseRef.current
+
+      const centerY = h / 2
+      const accent = colors.accent
+
+      // --- Helper: sample smoothed amplitude at a normalised x position ---
+      const sampleAmplitude = (nx: number): number => {
+        const idx = nx * (BAND_COUNT - 1)
+        const lo = Math.floor(idx)
+        const hi = Math.min(lo + 1, BAND_COUNT - 1)
+        const frac = idx - lo
+        // Cubic-ish interpolation via cosine for extra smoothness
+        const t = (1 - Math.cos(frac * Math.PI)) / 2
+        return smoothed[lo] * (1 - t) + smoothed[hi] * t
+      }
+
+      // --- Draw layered organic waves ---
+      // We draw three layers with decreasing opacity and slightly different
+      // wave parameters to create a rich, Claude-style flowing effect.
+
+      interface WaveLayer {
+        amplitudeScale: number
+        freqMult: number
+        phaseOffset: number
+        opacity: number
+        lineWidth: number
+        fill: boolean
+      }
+
+      const layers: WaveLayer[] = [
+        // Background fill layer: wide, soft glow
+        { amplitudeScale: 0.38, freqMult: 1.2, phaseOffset: 0, opacity: 0.12, lineWidth: 0, fill: true },
+        // Mid layer: secondary wave shape
+        { amplitudeScale: 0.34, freqMult: 1.8, phaseOffset: 1.2, opacity: 0.25, lineWidth: 1.5, fill: true },
+        // Foreground stroke: crisp primary wave
+        { amplitudeScale: 0.40, freqMult: 1.0, phaseOffset: 0.5, opacity: 0.85, lineWidth: 1.8, fill: false },
+      ]
+
+      for (const layer of layers) {
+        const maxAmp = h * 0.5 * layer.amplitudeScale
+
+        // Build top wave path points
+        const steps = Math.ceil(w / 2) // ~1 point per 2 CSS px for smoothness
+        const topPoints: { x: number; y: number }[] = []
+        const botPoints: { x: number; y: number }[] = []
+
+        for (let s = 0; s <= steps; s++) {
+          const x = (s / steps) * w
+          const nx = s / steps
+
+          // Audio-driven amplitude — power curve amplifies low volumes for visible response
+          const amp = Math.pow(sampleAmplitude(nx), 0.6)
+
+          // Organic wave: combine two sine waves at different frequencies
+          // plus a slow drift from the continuous phase
+          const wave1 = Math.sin(nx * Math.PI * 2 * layer.freqMult + phase + layer.phaseOffset)
+          const wave2 = Math.sin(nx * Math.PI * 3.3 * layer.freqMult + phase * 0.7 + layer.phaseOffset + 1.0) * 0.3
+          const wave = wave1 + wave2
+
+          // Edge fade: taper amplitude to zero at edges for a clean look
+          const edgeFade = Math.sin(nx * Math.PI)
+          // Minimum "idle breathing" amplitude so the wave never goes flat
+          const idleBreath = (0.08 + 0.04 * Math.sin(phase * 0.6 + layer.phaseOffset)) * edgeFade
+          const totalAmp = (amp * 0.85 + idleBreath) * edgeFade
+
+          const displacement = wave * totalAmp * maxAmp
+
+          topPoints.push({ x, y: centerY - displacement })
+          botPoints.push({ x, y: centerY + displacement })
+        }
+
+        // --- Draw the upper wave ---
+        ctx.save()
+        ctx.globalAlpha = layer.opacity
+
+        // Create gradient from center outward for warm glow
+        const grad = ctx.createLinearGradient(0, centerY - maxAmp, 0, centerY + maxAmp)
+        grad.addColorStop(0, accent)
+        grad.addColorStop(0.5, accent)
+        grad.addColorStop(1, accent)
+
+        if (layer.fill) {
+          // Filled shape: top wave -> bottom wave (mirrored)
+          ctx.beginPath()
+          ctx.moveTo(topPoints[0].x, centerY)
+
+          // Smooth curve through top points
+          for (let i = 0; i < topPoints.length - 1; i++) {
+            const curr = topPoints[i]
+            const next = topPoints[i + 1]
+            const cpx = (curr.x + next.x) / 2
+            ctx.quadraticCurveTo(curr.x, curr.y, cpx, (curr.y + next.y) / 2)
+          }
+          const lastTop = topPoints[topPoints.length - 1]
+          ctx.lineTo(lastTop.x, centerY)
+
+          // Bottom wave in reverse
+          ctx.lineTo(botPoints[botPoints.length - 1].x, centerY)
+          for (let i = botPoints.length - 1; i > 0; i--) {
+            const curr = botPoints[i]
+            const prev = botPoints[i - 1]
+            const cpx = (curr.x + prev.x) / 2
+            ctx.quadraticCurveTo(curr.x, curr.y, cpx, (curr.y + prev.y) / 2)
+          }
+          ctx.lineTo(botPoints[0].x, centerY)
+          ctx.closePath()
+
+          ctx.fillStyle = grad
+          ctx.fill()
+        } else {
+          // Stroke only: draw top and bottom wave lines
+          ctx.lineWidth = layer.lineWidth
+          ctx.strokeStyle = grad
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+
+          // Top wave stroke
+          ctx.beginPath()
+          ctx.moveTo(topPoints[0].x, topPoints[0].y)
+          for (let i = 0; i < topPoints.length - 1; i++) {
+            const curr = topPoints[i]
+            const next = topPoints[i + 1]
+            const cpx = (curr.x + next.x) / 2
+            ctx.quadraticCurveTo(curr.x, curr.y, cpx, (curr.y + next.y) / 2)
+          }
+          ctx.stroke()
+
+          // Bottom wave stroke (mirror)
+          ctx.beginPath()
+          ctx.moveTo(botPoints[0].x, botPoints[0].y)
+          for (let i = 0; i < botPoints.length - 1; i++) {
+            const curr = botPoints[i]
+            const next = botPoints[i + 1]
+            const cpx = (curr.x + next.x) / 2
+            ctx.quadraticCurveTo(curr.x, curr.y, cpx, (curr.y + next.y) / 2)
+          }
+          ctx.stroke()
+        }
+
+        ctx.restore()
+      }
+
+      // --- Subtle center line: warm glow anchor ---
+      ctx.save()
+      ctx.globalAlpha = 0.08
+      ctx.strokeStyle = accent
+      ctx.lineWidth = 0.5
+      ctx.beginPath()
+      ctx.moveTo(0, centerY)
+      ctx.lineTo(w, centerY)
+      ctx.stroke()
+      ctx.restore()
+
+      animRef.current = requestAnimationFrame(draw)
+    }
+
+    animRef.current = requestAnimationFrame(draw)
+    return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current)
+    }
+  }, [analyserRef, colors.accent])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="w-full"
+      style={{ height: 28, display: 'block' }}
+    />
+  )
+}
+
 // ─── Voice Buttons (extracted to avoid duplication) ───
 
-function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, onStop }: {
+function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, onStop, audioLevel }: {
   voiceState: VoiceState
   isConnecting: boolean
   colors: ReturnType<typeof useColors>
   onToggle: () => void
   onCancel: () => void
   onStop: () => void
+  audioLevel: number
 }) {
+  // Clamp and scale audio level for visual feedback
+  const level = Math.min(1, audioLevel * 4)
+
   return (
     <AnimatePresence mode="wait">
       {voiceState === 'recording' ? (
@@ -583,15 +906,37 @@ function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, on
           >
             <X size={15} weight="bold" />
           </button>
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onStop}
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
-            style={{ background: colors.accent, color: colors.textOnAccent }}
-            title="Confirm recording"
-          >
-            <Check size={15} weight="bold" />
-          </button>
+          {/* Mic button with pulsing audio ring */}
+          <div className="relative flex items-center justify-center" style={{ width: 36, height: 36 }}>
+            {/* Outer glow ring — reacts to audio level */}
+            <div
+              className="absolute inset-0 rounded-full"
+              style={{
+                boxShadow: `0 0 ${4 + level * 14}px ${1 + level * 5}px ${colors.accent}${Math.round(30 + level * 50).toString(16).padStart(2, '0')}`,
+                transform: `scale(${1 + level * 0.25})`,
+                transition: 'transform 0.08s ease-out, box-shadow 0.08s ease-out',
+              }}
+            />
+            {/* Inner ring border — opacity follows level */}
+            <div
+              className="absolute inset-0 rounded-full"
+              style={{
+                border: `2px solid ${colors.accent}`,
+                opacity: 0.4 + level * 0.6,
+                transform: `scale(${1 + level * 0.1})`,
+                transition: 'transform 0.08s ease-out, opacity 0.08s ease-out',
+              }}
+            />
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onStop}
+              className="w-9 h-9 rounded-full flex items-center justify-center relative z-10"
+              style={{ background: colors.accent, color: colors.textOnAccent }}
+              title="Stop recording"
+            >
+              <Microphone size={16} weight="fill" />
+            </button>
+          </div>
         </motion.div>
       ) : voiceState === 'transcribing' ? (
         <motion.div key="transcribing" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }} transition={{ duration: 0.1 }}>

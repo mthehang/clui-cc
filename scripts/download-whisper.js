@@ -19,7 +19,7 @@ const fs = require('fs')
 const path = require('path')
 
 const WHISPER_DIR = path.join(__dirname, '..', 'resources', 'whisper')
-const BIN_NAME = 'whisper-whisper-cli.exe'
+const BIN_NAME = 'whisper-cli.exe'
 const MODEL_NAME = 'ggml-tiny.bin'
 const BIN_PATH = path.join(WHISPER_DIR, BIN_NAME)
 const MODEL_PATH = path.join(WHISPER_DIR, MODEL_NAME)
@@ -76,8 +76,14 @@ function downloadWhisperBinary() {
   const tag = release.tag_name
   log(`Latest release: ${tag}`)
 
-  // Find the Windows x64 zip asset (no CUDA/Vulkan variants)
+  // Find Windows x64 zip: prefer cuBLAS/CUDA build (GPU), fallback to plain
   const asset = release.assets.find(a => {
+    const name = a.name.toLowerCase()
+    return name.includes('x64') && name.endsWith('.zip') && name.includes('cublas-12')
+  }) || release.assets.find(a => {
+    const name = a.name.toLowerCase()
+    return name.includes('x64') && name.endsWith('.zip') && name.includes('cublas')
+  }) || release.assets.find(a => {
     const name = a.name.toLowerCase()
     return name.includes('win') && name.includes('x64') && name.endsWith('.zip')
       && !name.includes('cuda') && !name.includes('vulkan') && !name.includes('openvino')
@@ -114,19 +120,35 @@ function downloadAndExtractZip(zipUrl, tag) {
       `Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force`
     ], { stdio: 'inherit', timeout: 120000 })
 
-    // Recursively find whisper binary (new name first, then legacy)
-    const found = findFileRecursive(extractDir, name =>
-      name === 'whisper-whisper-cli.exe' || name === 'whisper-cli.exe' || name === 'main.exe'
-    )
+    // Find the REAL whisper binary — search each name in priority order.
+    // IMPORTANT: The ZIP contains 28KB deprecation wrappers (main.exe, etc.)
+    // alongside the real binary (whisper-cli.exe ~485KB). We must skip wrappers.
+    const MIN_REAL_BINARY_SIZE = 100000 // real binary is >400KB, wrappers are ~28KB
+    const BINARY_NAMES = ['whisper-whisper-cli.exe', 'whisper-cli.exe']
+    let found = null
+    for (const binName of BINARY_NAMES) {
+      const candidate = findFileRecursive(extractDir, name => name === binName)
+      if (candidate) {
+        const size = fs.statSync(candidate).size
+        if (size >= MIN_REAL_BINARY_SIZE) {
+          found = candidate
+          break
+        }
+        log(`Skipping ${binName} (${size} bytes — deprecation wrapper)`)
+      }
+    }
 
     if (!found) {
       const allFiles = listFilesRecursive(extractDir)
       log('Extracted contents:')
-      allFiles.forEach(f => log(`  ${f}`))
-      throw new Error('Could not find whisper-cli.exe or main.exe in zip')
+      allFiles.forEach(f => {
+        const size = fs.statSync(f).size
+        log(`  ${f} (${size} bytes)`)
+      })
+      throw new Error('Could not find real whisper binary (>100KB) in zip — only deprecation wrappers found')
     }
 
-    log(`Found binary: ${path.basename(found)}`)
+    log(`Found binary: ${path.basename(found)} (${fs.statSync(found).size} bytes)`)
     fs.copyFileSync(found, BIN_PATH)
 
     // Copy any DLLs (ggml.dll, whisper.dll) to WHISPER_DIR

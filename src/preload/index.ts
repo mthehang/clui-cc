@@ -44,6 +44,7 @@ export interface CluiAPI {
   listWhisperModels(): Promise<Record<string, boolean>>
   deleteWhisperModel(model: string): Promise<{ ok: boolean; error?: string }>
   downloadWhisperModel(model: string): Promise<{ ok: boolean; error?: string }>
+  detectGpu(): Promise<{ hasGpu: boolean; name: string }>
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
   getAppVersion(): Promise<string>
@@ -116,6 +117,7 @@ const api: CluiAPI = {
   listWhisperModels: () => ipcRenderer.invoke(IPC.LIST_WHISPER_MODELS),
   deleteWhisperModel: (model: string) => ipcRenderer.invoke(IPC.DELETE_WHISPER_MODEL, model),
   downloadWhisperModel: (model: string) => ipcRenderer.invoke(IPC.DOWNLOAD_WHISPER_MODEL, model),
+  detectGpu: () => ipcRenderer.invoke(IPC.DETECT_GPU),
   getTheme: () => ipcRenderer.invoke(IPC.GET_THEME),
   onThemeChange: (callback) => {
     const handler = (_e: Electron.IpcRendererEvent, isDark: boolean) => callback(isDark)

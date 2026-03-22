@@ -443,6 +443,9 @@ export const IPC = {
   // Cloud usage
   FETCH_USAGE: 'clui:fetch-usage',
 
+  // GPU detection
+  DETECT_GPU: 'clui:detect-gpu',
+
   // Legacy (kept for backward compat during migration)
   STREAM_EVENT: 'clui:stream-event',
   RUN_COMPLETE: 'clui:run-complete',
