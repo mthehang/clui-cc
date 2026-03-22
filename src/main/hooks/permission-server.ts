@@ -35,7 +35,7 @@ const DEBUG = process.env.CLUI_DEBUG === '1'
 // This is the small set of tool classes that map to real, user-meaningful
 // approval moments. Routine internal agent mechanics (Read, Glob, Grep, etc.)
 // are auto-approved via --allowedTools to avoid noisy UX.
-const PERMISSION_REQUIRED_TOOLS = ['Bash', 'Edit', 'Write', 'MultiEdit']
+const PERMISSION_REQUIRED_TOOLS = ['Bash', 'Edit', 'Write', 'MultiEdit', 'AskUserQuestion']
 
 // Bash commands that are clearly read-only and safe to auto-approve.
 // Matches the leading command (before any pipes, semicolons, or &&).
@@ -61,6 +61,9 @@ const SAFE_BASH_COMMANDS = new Set([
   'tree', 'realpath', 'dirname', 'basename',
   // macOS
   'sw_vers', 'system_profiler', 'defaults', 'mdls', 'mdfind',
+  // Windows
+  'systeminfo', 'ver', 'wmic', 'tasklist', 'ipconfig', 'netstat',
+  'dir', 'type', 'where', 'findstr', 'hostname', 'whoami',
   // Diff / compare
   'diff', 'cmp', 'comm', 'sort', 'uniq', 'cut', 'awk', 'sed',
   'jq', 'yq', 'xargs', 'tr',
@@ -358,6 +361,17 @@ export class PermissionServer extends EventEmitter {
     clearTimeout(pending.timeout)
     this.pendingRequests.delete(questionId)
 
+    const toolName = pending.toolRequest.tool_name
+
+    // AskUserQuestion: forward user's answer as denial reason so Claude sees it
+    // (denying prevents the tool from trying interactive input which fails in -p mode)
+    if (toolName === 'AskUserQuestion') {
+      const answer = decision.startsWith('answer:') ? decision.substring(7) : (reason || decision)
+      log(`AskUserQuestion answered: ${answer}`)
+      pending.resolve({ decision: 'deny', reason: `User responded: ${answer}` })
+      return true
+    }
+
     // Fail-closed: reject unknown decision IDs immediately
     if (!VALID_DECISIONS.has(decision)) {
       log(`Unknown decision "${decision}" for [${questionId}] — denying (fail-closed)`)
@@ -365,7 +379,6 @@ export class PermissionServer extends EventEmitter {
       return true
     }
 
-    const toolName = pending.toolRequest.tool_name
     const sessionId = pending.toolRequest.session_id
 
     // Handle scoped "allow always" decisions
@@ -399,6 +412,20 @@ export class PermissionServer extends EventEmitter {
    * WebFetch gets domain-scoped options; all others get session-scoped.
    */
   getOptionsForTool(toolName: string, toolInput?: Record<string, unknown>): PermissionOption[] {
+    // AskUserQuestion: build options from the question's choices
+    if (toolName === 'AskUserQuestion') {
+      const opts = Array.isArray(toolInput?.options) ? toolInput.options as string[] : []
+      if (opts.length > 0) {
+        return opts.map((opt) => ({
+          id: `answer:${opt}`,
+          label: String(opt),
+          kind: 'allow' as const,
+        }))
+      }
+      // No predefined options — the card will show a text input
+      return []
+    }
+
     // Bash commands are too diverse for session-scoped blanket allow —
     // each command should be individually reviewed.
     if (toolName === 'Bash') {

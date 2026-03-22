@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus } from '../../shared/types'
+import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, CloudUsageResponse } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
 
@@ -58,8 +58,16 @@ interface State {
   staticInfo: StaticInfo | null
   /** User's preferred model override (null = use default) */
   preferredModel: string | null
-  /** Global permission mode: 'ask' shows cards, 'auto' auto-approves all tool calls */
-  permissionMode: 'ask' | 'auto'
+  /** Global permission mode: 'ask' shows cards, 'auto' auto-approves, 'bypass' bypasses all, 'plan' plans first */
+  permissionMode: 'ask' | 'auto' | 'bypass' | 'plan'
+  /** Thinking effort level (token budget) — null means default */
+  effortLevel: number | null
+  /** Whether extended thinking is enabled */
+  thinkingEnabled: boolean
+  /** Response language ('auto' = no override) */
+  responseLanguage: string
+  /** Persistent global system prompt */
+  globalRules: string
 
   // Marketplace state
   marketplaceOpen: boolean
@@ -71,10 +79,20 @@ interface State {
   marketplaceSearch: string
   marketplaceFilter: string
 
+  // Local skills
+  localSkills: Array<{ name: string; description: string; source: 'skill' | 'command' }>
+
+  // Cloud usage
+  cloudUsage: CloudUsageResponse | null
+  cloudUsageLoading: boolean
+  fetchCloudUsage: (forceRefresh?: boolean) => Promise<void>
+
   // Actions
+  loadLocalSkills: () => Promise<void>
   initStaticInfo: () => Promise<void>
   setPreferredModel: (model: string | null) => void
-  setPermissionMode: (mode: 'ask' | 'auto') => void
+  setPermissionMode: (mode: 'ask' | 'auto' | 'bypass' | 'plan') => void
+  setEffortLevel: (level: number | null) => void
   createTab: () => Promise<string>
   selectTab: (tabId: string) => void
   closeTab: (tabId: string) => void
@@ -82,6 +100,9 @@ interface State {
   toggleExpanded: () => void
   toggleMarketplace: () => void
   closeMarketplace: () => void
+  usagePanelOpen: boolean
+  toggleUsagePanel: () => void
+  closeUsagePanel: () => void
   loadMarketplace: (forceRefresh?: boolean) => Promise<void>
   setMarketplaceSearch: (query: string) => void
   setMarketplaceFilter: (filter: string) => void
@@ -135,6 +156,7 @@ function makeLocalTab(): TabState {
     messages: [],
     title: 'New Tab',
     lastResult: null,
+    cumulativeUsage: { totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0, totalInputTokens: 0, totalOutputTokens: 0, runCount: 0 },
     sessionModel: null,
     sessionTools: [],
     sessionMcpServers: [],
@@ -144,6 +166,7 @@ function makeLocalTab(): TabState {
     workingDirectory: '~',
     hasChosenDirectory: false,
     additionalDirs: [],
+    remoteEnabled: false,
   }
 }
 
@@ -156,6 +179,27 @@ export const useSessionStore = create<State>((set, get) => ({
   staticInfo: null,
   preferredModel: null,
   permissionMode: 'ask',
+  effortLevel: null,
+  thinkingEnabled: true,
+  responseLanguage: 'auto',
+  globalRules: '',
+
+  // Local skills
+  localSkills: [],
+
+  // Usage panel
+  usagePanelOpen: false,
+  cloudUsage: null,
+  cloudUsageLoading: false,
+  fetchCloudUsage: async (forceRefresh) => {
+    set({ cloudUsageLoading: true })
+    try {
+      const result = await window.clui.fetchUsage({ forceRefresh })
+      set({ cloudUsage: result, cloudUsageLoading: false })
+    } catch {
+      set({ cloudUsageLoading: false })
+    }
+  },
 
   // Marketplace
   marketplaceOpen: false,
@@ -166,6 +210,13 @@ export const useSessionStore = create<State>((set, get) => ({
   marketplacePluginStates: {},
   marketplaceSearch: '',
   marketplaceFilter: 'All',
+
+  loadLocalSkills: async () => {
+    try {
+      const skills = await window.clui.listLocalSkills()
+      set({ localSkills: skills })
+    } catch {}
+  },
 
   initStaticInfo: async () => {
     try {
@@ -179,6 +230,27 @@ export const useSessionStore = create<State>((set, get) => ({
           homePath: result.homePath || '~',
         },
       })
+      // Load persisted settings and apply to store
+      try {
+        const settings = await window.clui.getSettings()
+        if (settings) {
+          // Migrate legacy: planMode:true + permissionMode:'ask' → permissionMode:'plan'
+          let mode = settings.permissionMode || 'ask'
+          if (settings.planMode && mode === 'ask') mode = 'plan'
+          set({
+            permissionMode: mode as 'ask' | 'auto' | 'bypass' | 'plan',
+            effortLevel: settings.effortLevel ?? null,
+            thinkingEnabled: settings.thinkingEnabled !== false,
+            responseLanguage: settings.responseLanguage || 'auto',
+            globalRules: settings.globalRules || '',
+          })
+        }
+      } catch {}
+      // Restore custom shortcut from persisted settings
+      const customShortcut = useThemeStore.getState().customShortcut
+      if (customShortcut) window.clui.setShortcut(customShortcut)
+      // Load local skills after startup
+      await get().loadLocalSkills()
     } catch {}
   },
 
@@ -188,17 +260,32 @@ export const useSessionStore = create<State>((set, get) => ({
 
   setPermissionMode: (mode) => {
     set({ permissionMode: mode })
-    window.clui.setPermissionMode(mode)
+    // 'plan' is UI-only — CLI gets 'ask'; also persist planMode legacy flag
+    const cliMode = mode === 'plan' ? 'ask' : mode
+    window.clui.setPermissionMode(cliMode)
+    window.clui.saveSettings({ permissionMode: mode, planMode: mode === 'plan' })
+  },
+
+  setEffortLevel: (level) => {
+    set({ effortLevel: level })
+    window.clui.saveSettings({ effortLevel: level })
   },
 
   createTab: async () => {
-    const homeDir = get().staticInfo?.homePath || '~'
+    // Inherit directory from current tab if user has chosen one; otherwise fall back to home.
+    const s = get()
+    const activeTab = s.tabs.find((t) => t.id === s.activeTabId)
+    const defaultDir = (activeTab?.hasChosenDirectory ? activeTab.workingDirectory : null)
+      || s.staticInfo?.projectPath
+      || s.staticInfo?.homePath
+      || '~'
     try {
       const { tabId } = await window.clui.createTab()
       const tab: TabState = {
         ...makeLocalTab(),
         id: tabId,
-        workingDirectory: homeDir,
+        workingDirectory: defaultDir,
+        hasChosenDirectory: activeTab?.hasChosenDirectory || false,
       }
       set((s) => ({
         tabs: [...s.tabs, tab],
@@ -207,7 +294,8 @@ export const useSessionStore = create<State>((set, get) => ({
       return tabId
     } catch {
       const tab = makeLocalTab()
-      tab.workingDirectory = homeDir
+      tab.workingDirectory = defaultDir
+      tab.hasChosenDirectory = activeTab?.hasChosenDirectory || false
       set((s) => ({
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
@@ -254,12 +342,18 @@ export const useSessionStore = create<State>((set, get) => ({
     }))
   },
 
+  toggleUsagePanel: () => {
+    const s = get()
+    set({ usagePanelOpen: !s.usagePanelOpen, marketplaceOpen: false })
+  },
+  closeUsagePanel: () => set({ usagePanelOpen: false }),
+
   toggleMarketplace: () => {
     const s = get()
     if (s.marketplaceOpen) {
       set({ marketplaceOpen: false })
     } else {
-      set({ isExpanded: false, marketplaceOpen: true })
+      set({ isExpanded: false, marketplaceOpen: true, usagePanelOpen: false })
       get().loadMarketplace()
     }
   },
@@ -339,12 +433,18 @@ export const useSessionStore = create<State>((set, get) => ({
     }
   },
 
-  buildYourOwn: () => {
+  buildYourOwn: async () => {
     set({ marketplaceOpen: false, isExpanded: true })
-    // Small delay to let the UI transition
+    const { activeTabId, tabs } = get()
+    const tab = tabs.find((t) => t.id === activeTabId)
+    // If current tab is dead/failed/completed, create a fresh tab first
+    if (!tab || tab.status === 'dead' || tab.status === 'failed' || tab.status === 'completed') {
+      try { await get().addTab() } catch {}
+      await new Promise((r) => setTimeout(r, 300))
+    }
     setTimeout(() => {
       get().sendMessage('Help me create a new Claude Code skill')
-    }, 100)
+    }, 150)
   },
 
   closeTab: (tabId) => {
@@ -610,13 +710,38 @@ export const useSessionStore = create<State>((set, get) => ({
     }))
 
     // Send to backend — ControlPlane will queue if a run is active
-    const { preferredModel } = get()
+    const { preferredModel, effortLevel, permissionMode, thinkingEnabled, responseLanguage, globalRules } = get()
+    const isPlan = permissionMode === 'plan'
+
+    // Compose system prompt from plan mode + language + global rules
+    const LANG_NAMES: Record<string, string> = {
+      en: 'English', pt: 'Portuguese', es: 'Spanish', fr: 'French',
+      de: 'German', ja: 'Japanese', zh: 'Chinese', ko: 'Korean',
+      it: 'Italian', ru: 'Russian',
+    }
+    const parts: string[] = []
+    if (isPlan) {
+      parts.push('You are in PLAN MODE. Analyze the request carefully and create a detailed step-by-step plan. Do NOT execute any tools or make any changes. Only describe what you would do, the files you would modify, and why. Wait for the user to explicitly approve or say "go ahead" before proceeding with execution.')
+    }
+    if (responseLanguage !== 'auto' && LANG_NAMES[responseLanguage]) {
+      parts.push(`Always respond in ${LANG_NAMES[responseLanguage]}.`)
+    }
+    if (globalRules.trim()) {
+      parts.push(globalRules.trim())
+    }
+    const systemPrompt = parts.length > 0 ? parts.join('\n\n') : undefined
+    const effectiveThinkingBudget = thinkingEnabled ? (effortLevel || undefined) : undefined
+
     window.clui.prompt(activeTabId, requestId, {
       prompt: fullPrompt,
       projectPath: resolvedPath,
       sessionId: tab.claudeSessionId || undefined,
       model: preferredModel || undefined,
       addDirs: tab.additionalDirs.length > 0 ? tab.additionalDirs : undefined,
+      thinkingBudget: effectiveThinkingBudget,
+      remoteEnabled: tab.remoteEnabled || undefined,
+      systemPrompt,
+      permissionMode: isPlan ? 'ask' : undefined,
     }).catch((err: Error) => {
       get().handleError(activeTabId, {
         message: err.message,
@@ -781,6 +906,16 @@ export const useSessionStore = create<State>((set, get) => ({
               numTurns: event.numTurns,
               usage: event.usage,
               sessionId: event.sessionId,
+            }
+            // Accumulate cumulative usage
+            const cu = updated.cumulativeUsage
+            updated.cumulativeUsage = {
+              totalCostUsd: cu.totalCostUsd + event.costUsd,
+              totalDurationMs: cu.totalDurationMs + event.durationMs,
+              totalTurns: cu.totalTurns + event.numTurns,
+              totalInputTokens: cu.totalInputTokens + (event.usage.input_tokens || 0),
+              totalOutputTokens: cu.totalOutputTokens + (event.usage.output_tokens || 0),
+              runCount: cu.runCount + 1,
             }
             // ── Final text fallback ──
             // If neither text_chunks nor task_update text produced an assistant message,

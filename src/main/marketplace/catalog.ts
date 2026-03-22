@@ -30,7 +30,10 @@ function validateSourcePath(p: string): boolean {
 
 function assertSkillDirContained(skillsDir: string, base: string): void {
   const resolved = resolve(skillsDir)
-  if (!resolved.startsWith(base + '/') && resolved !== base) {
+  const resolvedBase = resolve(base)
+  // Use platform-aware separator for containment check (fixes Windows backslash mismatch)
+  const sep = require('path').sep
+  if (!resolved.startsWith(resolvedBase + sep) && resolved !== resolvedBase) {
     throw new Error(`Path escapes skills directory: ${resolved}`)
   }
 }
@@ -435,6 +438,48 @@ function deriveSemanticTags(name: string, description: string, skillPath: string
     if (matched.length >= 2) break // Cap at 2 semantic tags
   }
   return matched
+}
+
+// ─── Local Skills Discovery ───
+
+export async function scanLocalSkills(): Promise<Array<{ name: string; description: string; source: 'skill' | 'command' }>> {
+  const claudeDir = join(homedir(), '.claude')
+  const results: Array<{ name: string; description: string; source: 'skill' | 'command' }> = []
+
+  // Scan ~/.claude/skills/ — each subdirectory is a skill
+  try {
+    const skillEntries = await readdir(join(claudeDir, 'skills'), { withFileTypes: true })
+    for (const entry of skillEntries) {
+      if (!entry.isDirectory()) continue
+      let name = entry.name
+      let description = ''
+      try {
+        const skillMd = await readFile(join(claudeDir, 'skills', entry.name, 'SKILL.md'), 'utf-8')
+        const parsed = parseSkillFrontmatter(skillMd)
+        if (parsed.name) name = parsed.name
+        if (parsed.description) description = parsed.description
+      } catch {
+        // No SKILL.md — use directory name as fallback
+      }
+      results.push({ name, description, source: 'skill' })
+    }
+  } catch {
+    // skills/ directory may not exist
+  }
+
+  // Scan ~/.claude/commands/ — each .md file is a custom command
+  try {
+    const cmdEntries = await readdir(join(claudeDir, 'commands'), { withFileTypes: true })
+    for (const entry of cmdEntries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue
+      const name = entry.name.replace(/\.md$/, '')
+      results.push({ name, description: '', source: 'command' })
+    }
+  } catch {
+    // commands/ directory may not exist
+  }
+
+  return results
 }
 
 function execAsync(cmd: string, args: string[], timeout: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {

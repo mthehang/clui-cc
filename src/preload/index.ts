@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage } from '../shared/types'
+import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, AppSettings, CloudUsageResponse } from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -26,13 +26,29 @@ export interface CluiAPI {
   resetTabSession(tabId: string): void
   listSessions(projectPath?: string): Promise<SessionMeta[]>
   loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
+  listLocalSkills(): Promise<Array<{ name: string; description: string; source: 'skill' | 'command' }>>
   fetchMarketplace(forceRefresh?: boolean): Promise<{ plugins: CatalogPlugin[]; error: string | null }>
   listInstalledPlugins(): Promise<string[]>
   installPlugin(repo: string, pluginName: string, marketplace: string, sourcePath?: string, isSkillMd?: boolean): Promise<{ ok: boolean; error?: string }>
   uninstallPlugin(pluginName: string): Promise<{ ok: boolean; error?: string }>
+  getSettings(): Promise<AppSettings>
+  saveSettings(settings: Partial<AppSettings>): void
+  fetchUsage(opts?: { forceRefresh?: boolean }): Promise<CloudUsageResponse>
   setPermissionMode(mode: string): void
+  setZoom(level: number): void
+  setShortcut(accelerator: string | null): void
+  setSecondaryShortcut(accelerator: string | null): void
+  setTranscriptionShortcut(accelerator: string | null): void
+  listWhisperModels(): Promise<Record<string, boolean>>
+  deleteWhisperModel(model: string): Promise<{ ok: boolean; error?: string }>
+  downloadWhisperModel(model: string): Promise<{ ok: boolean; error?: string }>
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
+  getAppVersion(): Promise<string>
+  checkForUpdate(): Promise<boolean>
+  downloadUpdate(): Promise<boolean>
+  installUpdate(): Promise<boolean>
+  onUpdateStatus(callback: (status: import('../shared/types').UpdateStatus) => void): () => void
 
   // ─── Window management ───
   resizeHeight(height: number): void
@@ -49,6 +65,8 @@ export interface CluiAPI {
   onError(callback: (tabId: string, error: EnrichedError) => void): () => void
   onSkillStatus(callback: (status: { name: string; state: string; error?: string; reason?: string }) => void): () => void
   onWindowShown(callback: () => void): () => void
+  onAnimateHide(callback: () => void): () => void
+  onToggleTranscription(callback: () => void): () => void
 }
 
 const api: CluiAPI = {
@@ -76,18 +94,38 @@ const api: CluiAPI = {
   resetTabSession: (tabId) => ipcRenderer.send(IPC.RESET_TAB_SESSION, tabId),
   listSessions: (projectPath?: string) => ipcRenderer.invoke(IPC.LIST_SESSIONS, projectPath),
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
+  listLocalSkills: () => ipcRenderer.invoke(IPC.LIST_LOCAL_SKILLS),
   fetchMarketplace: (forceRefresh) => ipcRenderer.invoke(IPC.MARKETPLACE_FETCH, { forceRefresh }),
   listInstalledPlugins: () => ipcRenderer.invoke(IPC.MARKETPLACE_INSTALLED),
   installPlugin: (repo, pluginName, marketplace, sourcePath, isSkillMd) =>
     ipcRenderer.invoke(IPC.MARKETPLACE_INSTALL, { repo, pluginName, marketplace, sourcePath, isSkillMd }),
   uninstallPlugin: (pluginName) =>
     ipcRenderer.invoke(IPC.MARKETPLACE_UNINSTALL, { pluginName }),
+  getSettings: () => ipcRenderer.invoke(IPC.GET_SETTINGS),
+  saveSettings: (settings) => ipcRenderer.send(IPC.SAVE_SETTINGS, settings),
+  fetchUsage: (opts) => ipcRenderer.invoke(IPC.FETCH_USAGE, opts),
   setPermissionMode: (mode) => ipcRenderer.send(IPC.SET_PERMISSION_MODE, mode),
+  setZoom: (level: number) => ipcRenderer.send(IPC.SET_ZOOM, level),
+  setShortcut: (accelerator: string | null) => ipcRenderer.send(IPC.SET_SHORTCUT, accelerator),
+  setSecondaryShortcut: (accelerator: string | null) => ipcRenderer.send(IPC.SET_SECONDARY_SHORTCUT, accelerator),
+  setTranscriptionShortcut: (accelerator: string | null) => ipcRenderer.send(IPC.SET_TRANSCRIPTION_SHORTCUT, accelerator),
+  listWhisperModels: () => ipcRenderer.invoke(IPC.LIST_WHISPER_MODELS),
+  deleteWhisperModel: (model: string) => ipcRenderer.invoke(IPC.DELETE_WHISPER_MODEL, model),
+  downloadWhisperModel: (model: string) => ipcRenderer.invoke(IPC.DOWNLOAD_WHISPER_MODEL, model),
   getTheme: () => ipcRenderer.invoke(IPC.GET_THEME),
   onThemeChange: (callback) => {
     const handler = (_e: Electron.IpcRendererEvent, isDark: boolean) => callback(isDark)
     ipcRenderer.on(IPC.THEME_CHANGED, handler)
     return () => ipcRenderer.removeListener(IPC.THEME_CHANGED, handler)
+  },
+  getAppVersion: () => ipcRenderer.invoke(IPC.GET_APP_VERSION),
+  checkForUpdate: () => ipcRenderer.invoke(IPC.CHECK_FOR_UPDATE),
+  downloadUpdate: () => ipcRenderer.invoke(IPC.DOWNLOAD_UPDATE),
+  installUpdate: () => ipcRenderer.invoke(IPC.INSTALL_UPDATE),
+  onUpdateStatus: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, status: any) => callback(status)
+    ipcRenderer.on(IPC.UPDATE_STATUS, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_STATUS, handler)
   },
 
   // ─── Window management ───
@@ -137,6 +175,18 @@ const api: CluiAPI = {
     const handler = () => callback()
     ipcRenderer.on(IPC.WINDOW_SHOWN, handler)
     return () => ipcRenderer.removeListener(IPC.WINDOW_SHOWN, handler)
+  },
+
+  onAnimateHide: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on('clui:animate-hide', handler)
+    return () => ipcRenderer.removeListener('clui:animate-hide', handler)
+  },
+
+  onToggleTranscription: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on(IPC.TOGGLE_TRANSCRIPTION, handler)
+    return () => ipcRenderer.removeListener(IPC.TOGGLE_TRANSCRIPTION, handler)
   },
 }
 

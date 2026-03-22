@@ -1,11 +1,11 @@
-import { spawn, execSync, ChildProcess } from 'child_process'
+import { spawn, ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { homedir } from 'os'
-import { join } from 'path'
 import { StreamParser } from '../stream-parser'
 import { normalize } from './event-normalizer'
 import { log as _log } from '../logger'
 import { getCliEnv } from '../cli-env'
+import { findClaudeBinary, prependBinDirToPath } from '../platform'
 import type { ClaudeEvent, NormalizedEvent, RunOptions, EnrichedError } from '../../shared/types'
 
 const MAX_RING_LINES = 100
@@ -96,42 +96,13 @@ export class RunManager extends EventEmitter {
 
   constructor() {
     super()
-    this.claudeBinary = this._findClaudeBinary()
+    this.claudeBinary = findClaudeBinary()
     log(`Claude binary: ${this.claudeBinary}`)
-  }
-
-  private _findClaudeBinary(): string {
-    const candidates = [
-      '/usr/local/bin/claude',
-      '/opt/homebrew/bin/claude',
-      join(homedir(), '.npm-global/bin/claude'),
-    ]
-
-    for (const c of candidates) {
-      try {
-        execSync(`test -x "${c}"`, { stdio: 'ignore' })
-        return c
-      } catch {}
-    }
-
-    try {
-      return execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-    } catch {}
-
-    try {
-      return execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-    } catch {}
-
-    return 'claude'
   }
 
   private _getEnv(): NodeJS.ProcessEnv {
     const env = getCliEnv()
-    const binDir = this.claudeBinary.substring(0, this.claudeBinary.lastIndexOf('/'))
-    if (env.PATH && !env.PATH.includes(binDir)) {
-      env.PATH = `${binDir}:${env.PATH}`
-    }
-
+    prependBinDirToPath(env, this.claudeBinary)
     return env
   }
 
@@ -144,14 +115,24 @@ export class RunManager extends EventEmitter {
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
-      '--permission-mode', 'default',
     ]
+
+    const cliPerm = options.permissionMode === 'bypass' ? 'bypassPermissions'
+      : options.permissionMode === 'auto' ? 'autoApprove'
+      : 'default' // 'ask' and 'plan' both map to 'default'
+    args.push('--permission-mode', cliPerm)
 
     if (options.sessionId) {
       args.push('--resume', options.sessionId)
     }
     if (options.model) {
       args.push('--model', options.model)
+    }
+    if (options.thinkingBudget) {
+      args.push('--thinking', `budget:${options.thinkingBudget}`)
+    }
+    if (options.remoteEnabled) {
+      args.push('--rc')
     }
     if (options.addDirs && options.addDirs.length > 0) {
       for (const dir of options.addDirs) {
@@ -185,7 +166,7 @@ export class RunManager extends EventEmitter {
       args.push('--max-budget-usd', String(options.maxBudgetUsd))
     }
     if (options.systemPrompt) {
-      args.push('--system-prompt', options.systemPrompt)
+      args.push('--append-system-prompt', options.systemPrompt)
     }
     // Always tell Claude it's inside CLUI (additive, doesn't replace base prompt)
     args.push('--append-system-prompt', CLUI_SYSTEM_HINT)

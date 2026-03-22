@@ -1,10 +1,10 @@
-import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react'
+import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
-import { useColors } from '../theme'
+import { useColors, useThemeStore } from '../theme'
 
 const INPUT_MIN_HEIGHT = 20
 const INPUT_MAX_HEIGHT = 140
@@ -43,17 +43,30 @@ export function InputBar() {
   const activeTabId = useSessionStore((s) => s.activeTabId)
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const colors = useColors()
+  const micDeviceId = useThemeStore((s) => s.micDeviceId)
   const isBusy = tab?.status === 'running' || tab?.status === 'connecting'
   const isConnecting = tab?.status === 'connecting'
   const hasContent = input.trim().length > 0 || (tab?.attachments?.length ?? 0) > 0
   const canSend = !!tab && !isConnecting && hasContent
   const attachments = tab?.attachments || []
   const showSlashMenu = slashFilter !== null && !isConnecting
-  const skillCommands: SlashCommand[] = (tab?.sessionSkills || []).map((skill) => ({
-    command: `/${skill}`,
-    description: `Run skill: ${skill}`,
-    icon: <span className="text-[11px]">✦</span>,
-  }))
+  const localSkills = useSessionStore((s) => s.localSkills)
+  const skillCommands: SlashCommand[] = useMemo(() => {
+    const sessionNames = new Set(tab?.sessionSkills || [])
+    const sessionCmds: SlashCommand[] = (tab?.sessionSkills || []).map((skill) => ({
+      command: `/${skill}`,
+      description: `Run skill: ${skill}`,
+      icon: <span className="text-[11px]">✦</span>,
+    }))
+    const localCmds: SlashCommand[] = localSkills
+      .filter((ls) => !sessionNames.has(ls.name))
+      .map((ls) => ({
+        command: `/${ls.name}`,
+        description: ls.description || (ls.source === 'command' ? 'Custom command' : 'Local skill'),
+        icon: <span className="text-[11px]">{ls.source === 'command' ? '\u2318' : '\u2726'}</span>,
+      }))
+    return [...sessionCmds, ...localCmds]
+  }, [tab?.sessionSkills, localSkills])
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -230,8 +243,10 @@ export function InputBar() {
   }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel])
 
   const handleSlashSelect = useCallback((cmd: SlashCommand) => {
-    const isSkillCommand = !!tab?.sessionSkills?.includes(cmd.command.replace(/^\//, ''))
-    if (isSkillCommand) {
+    const cmdName = cmd.command.replace(/^\//, '')
+    const isSessionSkill = !!tab?.sessionSkills?.includes(cmdName)
+    const isLocalSkill = localSkills.some((ls) => ls.name === cmdName)
+    if (isSessionSkill || isLocalSkill) {
       setInput(`${cmd.command} `)
       setSlashFilter(null)
       requestAnimationFrame(() => textareaRef.current?.focus())
@@ -240,7 +255,7 @@ export function InputBar() {
     setInput('')
     setSlashFilter(null)
     executeCommand(cmd)
-  }, [executeCommand, tab?.sessionSkills])
+  }, [executeCommand, tab?.sessionSkills, localSkills])
 
   // ─── Send ───
   const handleSend = useCallback(() => {
@@ -340,7 +355,9 @@ export function InputBar() {
     chunksRef.current = []
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
+      })
     } catch {
       setVoiceError('Microphone permission denied.')
       return
@@ -372,6 +389,14 @@ export function InputBar() {
     if (voiceState === 'recording') stopRecording()
     else if (voiceState === 'idle') void startRecording()
   }, [voiceState, startRecording, stopRecording])
+
+  // Global shortcut triggers transcription toggle via IPC
+  useEffect(() => {
+    const unsub = window.clui.onToggleTranscription(() => {
+      handleVoiceToggle()
+    })
+    return unsub
+  }, [handleVoiceToggle])
 
   const hasAttachments = attachments.length > 0
 

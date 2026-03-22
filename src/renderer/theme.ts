@@ -277,12 +277,18 @@ interface ThemeState {
   themeMode: ThemeMode
   soundEnabled: boolean
   expandedUI: boolean
+  micDeviceId: string | null
+  zoomLevel: number
+  customShortcut: string | null
   /** OS-reported dark mode — used when themeMode is 'system' */
   _systemIsDark: boolean
   setIsDark: (isDark: boolean) => void
   setThemeMode: (mode: ThemeMode) => void
   setSoundEnabled: (enabled: boolean) => void
   setExpandedUI: (expanded: boolean) => void
+  setMicDeviceId: (id: string | null) => void
+  setZoomLevel: (level: number) => void
+  setCustomShortcut: (shortcut: string | null) => void
   /** Called by OS theme change listener — updates system value */
   setSystemTheme: (isDark: boolean) => void
 }
@@ -308,7 +314,16 @@ function applyTheme(isDark: boolean): void {
 
 const SETTINGS_KEY = 'clui-settings'
 
-function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean } {
+interface PersistedSettings {
+  themeMode: ThemeMode
+  soundEnabled: boolean
+  expandedUI: boolean
+  micDeviceId: string | null
+  zoomLevel: number
+  customShortcut: string | null
+}
+
+function loadSettings(): PersistedSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
     if (raw) {
@@ -317,13 +332,16 @@ function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expanded
         themeMode: ['light', 'dark'].includes(parsed.themeMode) ? parsed.themeMode : 'dark',
         soundEnabled: typeof parsed.soundEnabled === 'boolean' ? parsed.soundEnabled : true,
         expandedUI: typeof parsed.expandedUI === 'boolean' ? parsed.expandedUI : false,
+        micDeviceId: typeof parsed.micDeviceId === 'string' ? parsed.micDeviceId : null,
+        zoomLevel: typeof parsed.zoomLevel === 'number' ? Math.max(0.5, Math.min(2.0, parsed.zoomLevel)) : 1.0,
+        customShortcut: typeof parsed.customShortcut === 'string' ? parsed.customShortcut : null,
       }
     }
   } catch {}
-  return { themeMode: 'dark', soundEnabled: true, expandedUI: false }
+  return { themeMode: 'dark', soundEnabled: true, expandedUI: false, micDeviceId: null, zoomLevel: 1.0, customShortcut: null }
 }
 
-function saveSettings(s: { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean }): void {
+function saveSettings(s: PersistedSettings): void {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)) } catch {}
 }
 
@@ -335,6 +353,9 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   themeMode: saved.themeMode,
   soundEnabled: saved.soundEnabled,
   expandedUI: saved.expandedUI,
+  micDeviceId: saved.micDeviceId,
+  zoomLevel: saved.zoomLevel,
+  customShortcut: saved.customShortcut,
   _systemIsDark: true,
   setIsDark: (isDark) => {
     set({ isDark })
@@ -344,15 +365,30 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     const resolved = mode === 'system' ? get()._systemIsDark : mode === 'dark'
     set({ themeMode: mode, isDark: resolved })
     applyTheme(resolved)
-    saveSettings({ themeMode: mode, soundEnabled: get().soundEnabled, expandedUI: get().expandedUI })
+    const s = get(); saveSettings({ themeMode: s.themeMode, soundEnabled: s.soundEnabled, expandedUI: s.expandedUI, micDeviceId: s.micDeviceId, zoomLevel: s.zoomLevel, customShortcut: s.customShortcut })
   },
   setSoundEnabled: (enabled) => {
     set({ soundEnabled: enabled })
-    saveSettings({ themeMode: get().themeMode, soundEnabled: enabled, expandedUI: get().expandedUI })
+    const s = get(); saveSettings({ themeMode: s.themeMode, soundEnabled: s.soundEnabled, expandedUI: s.expandedUI, micDeviceId: s.micDeviceId, zoomLevel: s.zoomLevel, customShortcut: s.customShortcut })
   },
   setExpandedUI: (expanded) => {
     set({ expandedUI: expanded })
-    saveSettings({ themeMode: get().themeMode, soundEnabled: get().soundEnabled, expandedUI: expanded })
+    const s = get(); saveSettings({ themeMode: s.themeMode, soundEnabled: s.soundEnabled, expandedUI: s.expandedUI, micDeviceId: s.micDeviceId, zoomLevel: s.zoomLevel, customShortcut: s.customShortcut })
+  },
+  setMicDeviceId: (id) => {
+    set({ micDeviceId: id })
+    const s = get(); saveSettings({ themeMode: s.themeMode, soundEnabled: s.soundEnabled, expandedUI: s.expandedUI, micDeviceId: s.micDeviceId, zoomLevel: s.zoomLevel, customShortcut: s.customShortcut })
+  },
+  setZoomLevel: (level) => {
+    const clamped = Math.max(0.5, Math.min(2.0, Math.round(level * 10) / 10))
+    set({ zoomLevel: clamped })
+    const s = get(); saveSettings({ themeMode: s.themeMode, soundEnabled: s.soundEnabled, expandedUI: s.expandedUI, micDeviceId: s.micDeviceId, zoomLevel: s.zoomLevel, customShortcut: s.customShortcut })
+    window.clui?.setZoom?.(clamped)
+  },
+  setCustomShortcut: (shortcut) => {
+    set({ customShortcut: shortcut })
+    const s = get(); saveSettings({ themeMode: s.themeMode, soundEnabled: s.soundEnabled, expandedUI: s.expandedUI, micDeviceId: s.micDeviceId, zoomLevel: s.zoomLevel, customShortcut: s.customShortcut })
+    window.clui?.setShortcut?.(shortcut)
   },
   setSystemTheme: (isDark) => {
     set({ _systemIsDark: isDark })

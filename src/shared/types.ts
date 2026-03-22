@@ -156,6 +156,8 @@ export interface TabState {
   title: string
   /** Last run's result data (cost, tokens, duration) */
   lastResult: RunResult | null
+  /** Cumulative usage across all runs in this tab */
+  cumulativeUsage: CumulativeUsage
   /** Session metadata from init event */
   sessionModel: string | null
   sessionTools: string[]
@@ -170,6 +172,8 @@ export interface TabState {
   hasChosenDirectory: boolean
   /** Extra directories accessible via --add-dir (session-preserving) */
   additionalDirs: string[]
+  /** Remote Control enabled for this tab's session */
+  remoteEnabled: boolean
 }
 
 export interface Message {
@@ -188,6 +192,15 @@ export interface RunResult {
   numTurns: number
   usage: UsageData
   sessionId: string
+}
+
+export interface CumulativeUsage {
+  totalCostUsd: number
+  totalDurationMs: number
+  totalTurns: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  runCount: number
 }
 
 // ─── Canonical Events (normalized from raw stream) ───
@@ -221,6 +234,10 @@ export interface RunOptions {
   hookSettingsPath?: string
   /** Extra directories to add via --add-dir (session-preserving) */
   addDirs?: string[]
+  permissionMode?: string
+  thinkingBudget?: number
+  /** Enable Remote Control (--rc) for session sharing across devices */
+  remoteEnabled?: boolean
 }
 
 // ─── Control Plane Types ───
@@ -294,6 +311,45 @@ export interface CatalogPlugin {
   isSkillMd: boolean      // true = individual SKILL.md (direct install), false = CLI plugin (bundle install)
 }
 
+// ─── App Settings (persisted to settings.json) ───
+
+export interface AppSettings {
+  shortcut: string | null
+  zoomLevel: number
+  autoStart: boolean
+  startHidden: boolean
+  permissionMode: 'ask' | 'auto' | 'bypass' | 'plan'
+  effortLevel: number | null
+  planMode: boolean  // legacy — derived from permissionMode === 'plan'
+  secondaryShortcut: string | null
+  transcriptionShortcut: string | null
+  thinkingEnabled: boolean
+  remoteEnabled: boolean
+  responseLanguage: string
+  globalRules: string
+  whisperModel: string
+  whisperLanguage: string
+  whisperDevice: string
+}
+
+// ─── Cloud Usage Types (claude.ai-style bars) ───
+
+export interface UsageBarData {
+  label: string
+  current: number
+  limit: number
+  unit: string
+  resetsAt: number | null
+}
+
+export interface CloudUsageResponse {
+  bars: UsageBarData[]
+  lastUpdated: number
+  source: 'cloud' | 'local'
+  error: string | null
+  subscriptionType: string | null
+}
+
 // ─── IPC Channel Names ───
 
 export const IPC = {
@@ -321,6 +377,7 @@ export const IPC = {
   ANIMATE_HEIGHT: 'clui:animate-height',
   LIST_SESSIONS: 'clui:list-sessions',
   LOAD_SESSION: 'clui:load-session',
+  LIST_LOCAL_SKILLS: 'clui:list-local-skills',
 
   // One-way events (main → renderer)
   TEXT_CHUNK: 'clui:text-chunk',
@@ -358,8 +415,45 @@ export const IPC = {
   // Permission mode
   SET_PERMISSION_MODE: 'clui:set-permission-mode',
 
+  // Zoom
+  SET_ZOOM: 'clui:set-zoom',
+
+  // Shortcut
+  SET_SHORTCUT: 'clui:set-shortcut',
+  SET_SECONDARY_SHORTCUT: 'clui:set-secondary-shortcut',
+  SET_TRANSCRIPTION_SHORTCUT: 'clui:set-transcription-shortcut',
+  TOGGLE_TRANSCRIPTION: 'clui:toggle-transcription',
+  LIST_WHISPER_MODELS: 'clui:list-whisper-models',
+  DELETE_WHISPER_MODEL: 'clui:delete-whisper-model',
+  DOWNLOAD_WHISPER_MODEL: 'clui:download-whisper-model',
+
+  // Settings persistence
+  GET_SETTINGS: 'clui:get-settings',
+  SAVE_SETTINGS: 'clui:save-settings',
+
+  // Auto-update
+  CHECK_FOR_UPDATE: 'clui:check-for-update',
+  DOWNLOAD_UPDATE: 'clui:download-update',
+  INSTALL_UPDATE: 'clui:install-update',
+  GET_APP_VERSION: 'clui:get-app-version',
+  UPDATE_STATUS: 'clui:update-status',
+
+  // Cloud usage
+  FETCH_USAGE: 'clui:fetch-usage',
+
   // Legacy (kept for backward compat during migration)
   STREAM_EVENT: 'clui:stream-event',
   RUN_COMPLETE: 'clui:run-complete',
   RUN_ERROR: 'clui:run-error',
 } as const
+
+// ─── Auto-Update Types ───
+
+export type UpdateStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'up-to-date'; version: string }
+  | { state: 'available'; version: string; releaseNotes?: string }
+  | { state: 'downloading'; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string }

@@ -8,12 +8,13 @@
  * it was placed there by the user and we don't touch it.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, cpSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, cpSync, unlinkSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
 import { randomUUID } from 'crypto'
 import { SKILLS, type SkillEntry } from './manifest'
+import { IS_WIN } from '../platform'
 
 /** Directory containing bundled skill sources (relative to main process __dirname) */
 const BUNDLED_SKILLS_DIR = join(__dirname, '../../skills')
@@ -94,14 +95,23 @@ async function installGithubSkill(
     const pathDepth = path.split('/').length + 1 // +1 for the github top-level dir
     const tarballUrl = `https://api.github.com/repos/${repo}/tarball/${commitSha}`
 
-    // Use curl + tar — both always available on macOS
-    const cmd = [
-      `curl -sL "${tarballUrl}"`,
-      '|',
-      `tar -xz --strip-components=${pathDepth} -C "${tmpDir}" "*/${path}"`,
-    ].join(' ')
+    // Download and extract tarball
+    if (IS_WIN) {
+      // Windows: two-step download then extract (piping may not work in execSync)
+      const tmpTarball = join(tmpDir, 'download.tar.gz')
+      execSync(`curl.exe -sL "${tarballUrl}" -o "${tmpTarball}"`, { timeout: 60000, stdio: 'pipe' })
+      execSync(`tar.exe -xzf "${tmpTarball}" --strip-components=${pathDepth} -C "${tmpDir}"`, { timeout: 60000, stdio: 'pipe' })
+      try { unlinkSync(tmpTarball) } catch {}
+    } else {
+      // macOS/Linux: pipe curl directly into tar
+      const cmd = [
+        `curl -sL "${tarballUrl}"`,
+        '|',
+        `tar -xz --strip-components=${pathDepth} -C "${tmpDir}" "*/${path}"`,
+      ].join(' ')
 
-    execSync(cmd, { timeout: 60000, stdio: 'pipe' })
+      execSync(cmd, { timeout: 60000, stdio: 'pipe' })
+    }
 
     // Validate extracted files
     onStatus({ name: entry.name, state: 'validating' })

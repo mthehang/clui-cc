@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck, Keyboard, Gauge, Warning, ListChecks, Question } from '@phosphor-icons/react'
+import type { IconWeight } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
@@ -166,7 +167,20 @@ function PermissionModePicker() {
     setOpen((o) => !o)
   }
 
+  const isBypass = permissionMode === 'bypass'
   const isAuto = permissionMode === 'auto'
+  const isPlan = permissionMode === 'plan'
+  const modeLabel = isPlan ? 'Plan' : isBypass ? 'Bypass' : isAuto ? 'Auto' : 'Ask'
+
+  const triggerIcon = isPlan
+    ? <ListChecks size={11} weight="bold" />
+    : isBypass
+      ? <Warning size={11} weight="fill" />
+      : isAuto
+        ? <ShieldCheck size={11} weight="fill" />
+        : <Question size={11} weight="bold" />
+
+  const triggerColor = isPlan ? '#60a5fa' : isBypass ? '#e57c23' : colors.textTertiary
 
   return (
     <>
@@ -174,14 +188,10 @@ function PermissionModePicker() {
         ref={triggerRef}
         onClick={handleToggle}
         className="flex items-center gap-0.5 text-[10px] rounded-full px-1.5 py-0.5 transition-colors"
-        style={{
-          color: colors.textTertiary,
-          cursor: 'pointer',
-        }}
-        title="Permission mode (global)"
+        style={{ color: triggerColor, cursor: 'pointer' }}
+        title={`Mode: ${modeLabel}`}
       >
-        <ShieldCheck size={11} weight={isAuto ? 'fill' : 'regular'} />
-        {isAuto ? 'Auto' : 'Ask'}
+        {triggerIcon}
         <CaretDown size={10} style={{ opacity: 0.6 }} />
       </button>
 
@@ -209,18 +219,35 @@ function PermissionModePicker() {
         >
           <div className="py-1">
             <button
-              onClick={() => { setPermissionMode('ask'); setOpen(false) }}
+              onClick={() => { setPermissionMode('plan'); setOpen(false) }}
               className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
               style={{
-                color: !isAuto ? colors.textPrimary : colors.textSecondary,
-                fontWeight: !isAuto ? 600 : 400,
+                color: isPlan ? '#60a5fa' : colors.textSecondary,
+                fontWeight: isPlan ? 600 : 400,
               }}
             >
               <span className="flex items-center gap-1.5">
-                <ShieldCheck size={12} />
+                <ListChecks size={12} weight="bold" style={{ color: '#60a5fa' }} />
+                Plan
+              </span>
+              {isPlan && <Check size={12} style={{ color: '#60a5fa' }} />}
+            </button>
+
+            <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
+
+            <button
+              onClick={() => { setPermissionMode('ask'); setOpen(false) }}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
+              style={{
+                color: permissionMode === 'ask' ? colors.textPrimary : colors.textSecondary,
+                fontWeight: permissionMode === 'ask' ? 600 : 400,
+              }}
+            >
+              <span className="flex items-center gap-1.5">
+                <Question size={12} weight="bold" />
                 Ask
               </span>
-              {!isAuto && <Check size={12} style={{ color: colors.accent }} />}
+              {permissionMode === 'ask' && <Check size={12} style={{ color: colors.accent }} />}
             </button>
 
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
@@ -239,6 +266,143 @@ function PermissionModePicker() {
               </span>
               {isAuto && <Check size={12} style={{ color: colors.accent }} />}
             </button>
+
+            <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
+
+            <button
+              onClick={() => { setPermissionMode('bypass'); setOpen(false) }}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
+              style={{
+                color: isBypass ? '#e57c23' : colors.textSecondary,
+                fontWeight: isBypass ? 600 : 400,
+              }}
+            >
+              <span className="flex items-center gap-1.5">
+                <Warning size={12} weight="fill" style={{ color: '#e57c23' }} />
+                Bypass
+              </span>
+              {isBypass && <Check size={12} style={{ color: '#e57c23' }} />}
+            </button>
+          </div>
+        </motion.div>,
+        popoverLayer,
+      )}
+    </>
+  )
+}
+
+/* ─── Effort Picker (thinking budget) ─── */
+
+const EFFORT_OPTIONS: Array<{ label: string; value: number | null; weight: IconWeight }> = [
+  { label: 'Default', value: null, weight: 'thin' },
+  { label: 'Low', value: 4096, weight: 'light' },
+  { label: 'Medium', value: 8192, weight: 'regular' },
+  { label: 'High', value: 16384, weight: 'bold' },
+  { label: 'Max', value: 32768, weight: 'fill' },
+]
+
+function EffortPicker() {
+  const effortLevel = useSessionStore((s) => s.effortLevel)
+  const setEffortLevel = useSessionStore((s) => s.setEffortLevel)
+  const popoverLayer = usePopoverLayer()
+  const colors = useColors()
+
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ bottom: 0, left: 0 })
+
+  const updatePos = useCallback(() => {
+    if (!triggerRef.current) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    setPos({
+      bottom: window.innerHeight - rect.top + 6,
+      left: rect.left,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (triggerRef.current?.contains(target)) return
+      if (popoverRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const handleToggle = () => {
+    if (!open) updatePos()
+    setOpen((o) => !o)
+  }
+
+  const activeOption = EFFORT_OPTIONS.find((o) => o.value === effortLevel) || EFFORT_OPTIONS[0]
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        onClick={handleToggle}
+        className="flex items-center gap-0.5 text-[10px] rounded-full px-1.5 py-0.5 transition-colors"
+        style={{
+          color: colors.textTertiary,
+          cursor: 'pointer',
+        }}
+        title={`Thinking effort: ${activeOption.label}`}
+      >
+        <Gauge size={11} weight={activeOption.weight} style={activeOption.value === 32768 ? { color: colors.accent } : undefined} />
+        <CaretDown size={10} style={{ opacity: 0.6 }} />
+      </button>
+
+      {popoverLayer && open && createPortal(
+        <motion.div
+          ref={popoverRef}
+          data-clui-ui
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 4 }}
+          transition={{ duration: 0.12 }}
+          className="rounded-xl"
+          style={{
+            position: 'fixed',
+            bottom: pos.bottom,
+            left: pos.left,
+            width: 180,
+            pointerEvents: 'auto',
+            background: colors.popoverBg,
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            boxShadow: colors.popoverShadow,
+            border: `1px solid ${colors.popoverBorder}`,
+          }}
+        >
+          <div className="py-1">
+            {EFFORT_OPTIONS.map((opt, idx) => {
+              const isSelected = effortLevel === opt.value
+              return (
+                <React.Fragment key={opt.label}>
+                  {idx > 0 && (
+                    <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
+                  )}
+                  <button
+                    onClick={() => { setEffortLevel(opt.value); setOpen(false) }}
+                    className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
+                    style={{
+                      color: isSelected ? colors.textPrimary : colors.textSecondary,
+                      fontWeight: isSelected ? 600 : 400,
+                    }}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Gauge size={12} weight={opt.weight} style={opt.value === 32768 ? { color: colors.accent } : undefined} />
+                      {opt.label}
+                    </span>
+                    {isSelected && <Check size={12} style={{ color: colors.accent }} />}
+                  </button>
+                </React.Fragment>
+              )
+            })}
           </div>
         </motion.div>,
         popoverLayer,
@@ -249,11 +413,18 @@ function PermissionModePicker() {
 
 /* ─── StatusBar ─── */
 
+
 /** Get a compact display path: basename for deep paths, ~ for home */
 function compactPath(fullPath: string): string {
   if (fullPath === '~') return '~'
   const parts = fullPath.replace(/\/$/, '').split('/')
   return parts[parts.length - 1] || fullPath
+}
+
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
 }
 
 export function StatusBar() {
@@ -265,6 +436,8 @@ export function StatusBar() {
       && a.hasChosenDirectory === b.hasChosenDirectory
       && a.workingDirectory === b.workingDirectory
       && a.claudeSessionId === b.claudeSessionId
+      && a.cumulativeUsage.totalInputTokens === b.cumulativeUsage.totalInputTokens
+      && a.cumulativeUsage.totalOutputTokens === b.cumulativeUsage.totalOutputTokens
     ),
   )
   const addDirectory = useSessionStore((s) => s.addDirectory)
@@ -433,10 +606,30 @@ export function StatusBar() {
         <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
 
         <PermissionModePicker />
+
+        <EffortPicker />
       </div>
 
-      {/* Right — Open in CLI */}
+      {/* Right — tokens + shortcut + CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
+        {tab.cumulativeUsage.runCount > 0 && (
+          <span
+            className="text-[10px] tabular-nums"
+            style={{ color: colors.textTertiary, opacity: 0.7 }}
+            title={`Input: ${formatTokenCount(tab.cumulativeUsage.totalInputTokens)} / Output: ${formatTokenCount(tab.cumulativeUsage.totalOutputTokens)}`}
+          >
+            {formatTokenCount(tab.cumulativeUsage.totalInputTokens + tab.cumulativeUsage.totalOutputTokens)} tok
+          </span>
+        )}
+        <span
+          className="text-[10px] flex items-center gap-1 opacity-60"
+          style={{ color: colors.textTertiary }}
+          title={navigator.platform?.includes('Mac') ? 'Toggle: ⌥Space or ⌘⇧K' : 'Toggle: Ctrl+Alt+Space or Ctrl+Shift+K'}
+        >
+          <Keyboard size={10} />
+          {navigator.platform?.includes('Mac') ? '⌥Space' : 'Ctrl+Alt+Space'}
+        </span>
+        <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
         <button
           onClick={handleOpenInTerminal}
           className="flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"
