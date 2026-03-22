@@ -1392,11 +1392,8 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       // No more sync auto-download — models are downloaded from Settings
 
       if (!modelPath) {
-        const downloadHint = IS_WIN
-          ? 'Auto-download failed. Download manually:\n  curl -L -o "%LOCALAPPDATA%\\clui-cc\\whisper\\ggml-tiny.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
-          : 'Whisper model not found. Download with:\n  mkdir -p ~/.local/share/whisper && curl -L -o ~/.local/share/whisper/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
         return {
-          error: downloadHint,
+          error: 'No whisper model downloaded yet. Open Settings > Whisper and download a model to enable voice transcription.',
           transcript: null,
         }
       }

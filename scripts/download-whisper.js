@@ -215,8 +215,9 @@ function main() {
 
   try {
     downloadWhisperBinary()
-    downloadModel()
-    log('=== Done! Whisper is ready for bundling ===')
+    // Models are NOT bundled — users download their preferred model from Settings.
+    // This keeps the installer small (~50MB instead of ~125MB with ggml-tiny).
+    log('=== Done! Whisper binary is ready for bundling (no model bundled) ===')
   } catch (err) {
     log(`ERROR: ${err.message}`)
     process.exit(1)
