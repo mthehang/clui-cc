@@ -528,7 +528,35 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
   }, [])
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2.5">
+      {/* About */}
+      <div className="flex flex-col gap-1">
+        <span className="text-[12px] font-semibold" style={{ color: colors.textPrimary }}>Clui CC</span>
+        <span className="text-[10px]" style={{ color: colors.textTertiary }}>Command Line User Interface for Claude Code</span>
+        <div className="flex items-center gap-2 mt-0.5">
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); window.clui.openExternal('https://github.com/mthehang/clui-cc') }}
+            className="text-[10px]"
+            style={{ color: colors.accent, cursor: 'pointer' }}
+          >
+            GitHub
+          </a>
+          <span className="text-[10px]" style={{ color: colors.textTertiary }}>·</span>
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); window.clui.openExternal('https://github.com/mthehang/clui-cc/issues') }}
+            className="text-[10px]"
+            style={{ color: colors.accent, cursor: 'pointer' }}
+          >
+            Report Issue
+          </a>
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: colors.containerBorder }} />
+
+      {/* Version & Updates */}
       <div className="flex items-center justify-between">
         <span className="text-[11px]" style={{ color: colors.textSecondary }}>Version</span>
         <span className="text-[11px] font-mono" style={{ color: colors.textTertiary }}>v{version}</span>
