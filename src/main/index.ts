@@ -1167,14 +1167,15 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
 
     if (IS_WIN) {
       // Windows: check bundled → user-local → PATH
-      const bundledBin = join(process.resourcesPath || '', 'whisper', 'whisper-cli.exe')
-      const localBin = join(whisperLocalDir, 'whisper-cli.exe')
-      if (existsSync(bundledBin)) {
-        whisperBin = bundledBin
-      } else if (existsSync(localBin)) {
-        whisperBin = localBin
-      } else {
-        for (const name of ['whisper-cli', 'whisper']) {
+      // Try new name (whisper-whisper-cli) first, then legacy (whisper-cli)
+      for (const binName of ['whisper-whisper-cli.exe', 'whisper-cli.exe']) {
+        const bundled = join(process.resourcesPath || '', 'whisper', binName)
+        const local = join(whisperLocalDir, binName)
+        if (existsSync(bundled)) { whisperBin = bundled; break }
+        if (existsSync(local)) { whisperBin = local; break }
+      }
+      if (!whisperBin) {
+        for (const name of ['whisper-whisper-cli', 'whisper-cli', 'whisper']) {
           const found = findBinaryInPath(name)
           if (found) { whisperBin = found; break }
         }
@@ -1216,8 +1217,9 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
         const { execFileSync } = require('child_process')
         mkdirSync(whisperLocalDir, { recursive: true })
 
-        const localBin = join(whisperLocalDir, 'whisper-cli.exe')
-        if (!existsSync(localBin)) {
+        const localBin = join(whisperLocalDir, 'whisper-whisper-cli.exe')
+        const legacyBin = join(whisperLocalDir, 'whisper-cli.exe')
+        if (!existsSync(localBin) && !existsSync(legacyBin)) {
           const releaseJson = execFileSync('curl', ['-sL', '-H', 'User-Agent: clui-cc', 'https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest'], { encoding: 'utf-8', timeout: 30000 })
           const release = JSON.parse(releaseJson)
           const asset = release.assets.find((a: any) => { const n = a.name.toLowerCase(); return n.includes('win') && n.includes('x64') && n.endsWith('.zip') && !n.includes('cuda') && !n.includes('vulkan') && !n.includes('openvino') })
@@ -1227,7 +1229,7 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
             execFileSync('curl', ['-L', '--fail', '-o', zipPath, asset.browser_download_url], { stdio: 'ignore', timeout: 600000 })
             const listing = execFileSync('tar', ['-tf', zipPath], { encoding: 'utf-8' })
             const entries = listing.split(/\r?\n/).filter(Boolean)
-            const binEntry = entries.find((e: string) => e.endsWith('whisper-cli.exe')) || entries.find((e: string) => e.endsWith('main.exe'))
+            const binEntry = entries.find((e: string) => e.endsWith('whisper-whisper-cli.exe')) || entries.find((e: string) => e.endsWith('whisper-cli.exe')) || entries.find((e: string) => e.endsWith('main.exe'))
             if (binEntry) {
               execFileSync('tar', ['-xf', zipPath, '-C', whisperLocalDir, binEntry], { stdio: 'ignore' })
               const extracted = join(whisperLocalDir, binEntry)
@@ -1268,7 +1270,7 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
     }
 
     const isWhisperKit = !IS_WIN && whisperBin.includes('whisperkit-cli')
-    const isWhisperCpp = !isWhisperKit && whisperBin.includes('whisper-cli')
+    const isWhisperCpp = !isWhisperKit && (whisperBin.includes('whisper-cli') || whisperBin.includes('whisper-whisper-cli'))
 
     // Read whisper settings
     const wSettings = loadSettings()

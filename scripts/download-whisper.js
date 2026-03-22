@@ -19,7 +19,7 @@ const fs = require('fs')
 const path = require('path')
 
 const WHISPER_DIR = path.join(__dirname, '..', 'resources', 'whisper')
-const BIN_NAME = 'whisper-cli.exe'
+const BIN_NAME = 'whisper-whisper-cli.exe'
 const MODEL_NAME = 'ggml-tiny.bin'
 const BIN_PATH = path.join(WHISPER_DIR, BIN_NAME)
 const MODEL_PATH = path.join(WHISPER_DIR, MODEL_NAME)
@@ -106,9 +106,9 @@ function downloadAndExtractZip(zipUrl, tag) {
       `Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force`
     ], { stdio: 'inherit', timeout: 120000 })
 
-    // Recursively find whisper-cli.exe or main.exe
+    // Recursively find whisper binary (new name first, then legacy)
     const found = findFileRecursive(extractDir, name =>
-      name === 'whisper-cli.exe' || name === 'main.exe'
+      name === 'whisper-whisper-cli.exe' || name === 'whisper-cli.exe' || name === 'main.exe'
     )
 
     if (!found) {
