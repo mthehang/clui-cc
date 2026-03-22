@@ -1146,7 +1146,13 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
       new Promise((resolve, reject) => {
         execFile(bin, args, { encoding: 'utf-8', timeout }, (err: any, stdout: string, stderr: string) => {
           if (err) {
-            const detail = stderr?.trim() || stdout?.trim() || err.message
+            // Whisper may exit non-zero with a deprecation warning but still produce valid output
+            if (stdout?.trim()) {
+              log(`whisper exited with error but produced output, using stdout. stderr: ${stderr?.trim()}`)
+              resolve(stdout)
+              return
+            }
+            const detail = stderr?.trim() || err.message
             reject(new Error(detail))
             return
           }
