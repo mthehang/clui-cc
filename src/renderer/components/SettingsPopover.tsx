@@ -271,19 +271,34 @@ function StartupSection({ colors }: { colors: ReturnType<typeof useColors> }) {
 
 /* ─── Response language ─── */
 
-const LANGUAGES = [
-  { value: 'auto', label: 'Auto-detect' },
-  { value: 'en', label: 'English' },
-  { value: 'pt', label: 'Portuguese' },
-  { value: 'es', label: 'Spanish' },
-  { value: 'fr', label: 'French' },
-  { value: 'de', label: 'German' },
-  { value: 'ja', label: 'Japanese' },
-  { value: 'zh', label: 'Chinese' },
-  { value: 'ko', label: 'Korean' },
-  { value: 'it', label: 'Italian' },
-  { value: 'ru', label: 'Russian' },
-] as const
+const RESPONSE_LANGUAGES: Record<string, Array<{ value: string; label: string }>> = {
+  'en': [
+    { value: 'auto', label: 'Auto-detect' },
+    { value: 'en', label: 'English' },
+    { value: 'pt', label: 'Portuguese' },
+    { value: 'es', label: 'Spanish' },
+    { value: 'fr', label: 'French' },
+    { value: 'de', label: 'German' },
+    { value: 'ja', label: 'Japanese' },
+    { value: 'zh', label: 'Chinese' },
+    { value: 'ko', label: 'Korean' },
+    { value: 'it', label: 'Italian' },
+    { value: 'ru', label: 'Russian' },
+  ],
+  'pt-BR': [
+    { value: 'auto', label: 'Detectar automaticamente' },
+    { value: 'en', label: 'Inglês' },
+    { value: 'pt', label: 'Português' },
+    { value: 'es', label: 'Espanhol' },
+    { value: 'fr', label: 'Francês' },
+    { value: 'de', label: 'Alemão' },
+    { value: 'ja', label: 'Japonês' },
+    { value: 'zh', label: 'Chinês' },
+    { value: 'ko', label: 'Coreano' },
+    { value: 'it', label: 'Italiano' },
+    { value: 'ru', label: 'Russo' },
+  ],
+}
 
 function LanguageSection({ colors }: { colors: ReturnType<typeof useColors> }) {
   const t = useT()
@@ -295,6 +310,8 @@ function LanguageSection({ colors }: { colors: ReturnType<typeof useColors> }) {
       setResponseLang(s.responseLanguage || 'auto')
     }).catch(() => {})
   }, [])
+
+  const langOptions = RESPONSE_LANGUAGES[appLanguage] || RESPONSE_LANGUAGES['en']
 
   return (
     <div className="flex flex-col gap-2">
@@ -308,7 +325,7 @@ function LanguageSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             window.clui.saveSettings({ appLanguage: value })
             useSessionStore.setState({ appLanguage: value })
           }}
-          className="text-[11px] rounded-lg px-2 py-1 outline-none"
+          className="text-[11px] rounded-lg px-2 py-1 outline-none clui-select"
           style={{
             background: colors.surfacePrimary,
             color: colors.textSecondary,
@@ -331,7 +348,7 @@ function LanguageSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             setResponseLang(e.target.value)
             window.clui.saveSettings({ responseLanguage: e.target.value })
           }}
-          className="text-[11px] rounded-lg px-2 py-1 outline-none"
+          className="text-[11px] rounded-lg px-2 py-1 outline-none clui-select"
           style={{
             background: colors.surfacePrimary,
             color: colors.textSecondary,
@@ -339,7 +356,7 @@ function LanguageSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             width: 140,
           }}
         >
-          {LANGUAGES.map((l) => (
+          {langOptions.map((l) => (
             <option key={l.value} value={l.value}>{l.label}</option>
           ))}
         </select>

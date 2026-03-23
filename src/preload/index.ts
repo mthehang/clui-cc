@@ -25,6 +25,7 @@ export interface CluiAPI {
   initSession(tabId: string): void
   resetTabSession(tabId: string): void
   listSessions(projectPath?: string): Promise<SessionMeta[]>
+  listAllSessions(): Promise<SessionMeta[]>
   loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
   listLocalSkills(): Promise<Array<{ name: string; description: string; source: 'skill' | 'command' }>>
   runCliLogin(): Promise<{ ok: boolean; error?: string }>
@@ -104,6 +105,7 @@ const api: CluiAPI = {
   initSession: (tabId) => ipcRenderer.send(IPC.INIT_SESSION, tabId),
   resetTabSession: (tabId) => ipcRenderer.send(IPC.RESET_TAB_SESSION, tabId),
   listSessions: (projectPath?: string) => ipcRenderer.invoke(IPC.LIST_SESSIONS, projectPath),
+  listAllSessions: () => ipcRenderer.invoke(IPC.LIST_ALL_SESSIONS),
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
   listLocalSkills: () => ipcRenderer.invoke(IPC.LIST_LOCAL_SKILLS),
   runCliLogin: () => ipcRenderer.invoke(IPC.RUN_CLI_LOGIN),

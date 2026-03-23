@@ -135,7 +135,7 @@ export class RunManager extends EventEmitter {
       args.push('--model', options.model)
     }
     if (options.thinkingBudget) {
-      args.push('--thinking', `budget:${options.thinkingBudget}`)
+      args.push('--thinking', 'enabled')
     }
     if (options.addDirs && options.addDirs.length > 0) {
       for (const dir of options.addDirs) {

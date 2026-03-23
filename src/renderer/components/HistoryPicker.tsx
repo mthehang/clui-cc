@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Clock, ChatCircle } from '@phosphor-icons/react'
+import { Clock, ChatCircle, FolderOpen } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
@@ -26,6 +26,13 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}M`
 }
 
+/** Get last folder name from a path */
+function lastFolder(fullPath: string): string {
+  if (!fullPath || fullPath === '~') return '~'
+  const parts = fullPath.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] || fullPath
+}
+
 export function HistoryPicker() {
   const t = useT()
   const resumeSession = useSessionStore((s) => s.resumeSession)
@@ -37,6 +44,8 @@ export function HistoryPicker() {
   const staticInfo = useSessionStore((s) => s.staticInfo)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
+
+  const [showAll, setShowAll] = useState(false)
   const effectiveProjectPath = activeTab?.hasChosenDirectory
     ? activeTab.workingDirectory
     : (staticInfo?.homePath || activeTab?.workingDirectory || '~')
@@ -69,13 +78,22 @@ export function HistoryPicker() {
   const loadSessions = useCallback(async () => {
     setLoading(true)
     try {
-      const result = await window.clui.listSessions(effectiveProjectPath)
-      setSessions(result)
+      if (showAll) {
+        const result = await window.clui.listAllSessions()
+        setSessions(result)
+      } else {
+        const result = await window.clui.listSessions(effectiveProjectPath)
+        setSessions(result)
+      }
     } catch {
       setSessions([])
     }
     setLoading(false)
-  }, [effectiveProjectPath])
+  }, [effectiveProjectPath, showAll])
+
+  useEffect(() => {
+    if (open) void loadSessions()
+  }, [showAll, open, loadSessions])
 
   useEffect(() => {
     if (!open) return
@@ -92,7 +110,6 @@ export function HistoryPicker() {
   const handleToggle = () => {
     if (!open) {
       updatePos()
-      void loadSessions()
     }
     setOpen((o) => !o)
   }
@@ -102,7 +119,9 @@ export function HistoryPicker() {
     const title = session.firstMessage
       ? (session.firstMessage.length > 30 ? session.firstMessage.substring(0, 27) + '...' : session.firstMessage)
       : session.slug || 'Resumed'
-    void resumeSession(session.sessionId, title, effectiveProjectPath)
+    // Use the session's original projectPath if available (unified history)
+    const resumePath = session.projectPath || effectiveProjectPath
+    void resumeSession(session.sessionId, title, resumePath)
   }
 
   return (
@@ -131,7 +150,7 @@ export function HistoryPicker() {
             ...(pos.top != null ? { top: pos.top } : {}),
             ...(pos.bottom != null ? { bottom: pos.bottom } : {}),
             right: pos.right,
-            width: 280,
+            width: 300,
             pointerEvents: 'auto',
             background: colors.popoverBg,
             backdropFilter: 'blur(20px)',
@@ -144,11 +163,38 @@ export function HistoryPicker() {
             flexDirection: 'column' as const,
           }}
         >
-          <div className="px-3 py-2 text-[11px] font-medium flex-shrink-0" style={{ color: colors.textTertiary, borderBottom: `1px solid ${colors.popoverBorder}` }}>
-            {t('history.title')}
+          {/* Header with toggle */}
+          <div className="px-3 py-2 flex items-center justify-between flex-shrink-0" style={{ borderBottom: `1px solid ${colors.popoverBorder}` }}>
+            <span className="text-[11px] font-medium" style={{ color: colors.textTertiary }}>
+              {t('history.title')}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowAll(false)}
+                className="text-[10px] px-1.5 py-0.5 rounded-md transition-colors"
+                style={{
+                  color: !showAll ? colors.textPrimary : colors.textTertiary,
+                  background: !showAll ? colors.accent + '22' : 'transparent',
+                  fontWeight: !showAll ? 600 : 400,
+                }}
+              >
+                {t('history.current') || 'Current'}
+              </button>
+              <button
+                onClick={() => setShowAll(true)}
+                className="text-[10px] px-1.5 py-0.5 rounded-md transition-colors"
+                style={{
+                  color: showAll ? colors.textPrimary : colors.textTertiary,
+                  background: showAll ? colors.accent + '22' : 'transparent',
+                  fontWeight: showAll ? 600 : 400,
+                }}
+              >
+                {t('history.all') || 'All'}
+              </button>
+            </div>
           </div>
 
-          <div className="overflow-y-auto py-1" style={{ maxHeight: pos.maxHeight != null ? undefined : 180 }}>
+          <div className="overflow-y-auto py-1" style={{ maxHeight: pos.maxHeight != null ? undefined : 240 }}>
             {loading && (
               <div className="px-3 py-4 text-center text-[11px]" style={{ color: colors.textTertiary }}>
                 Loading...
@@ -175,7 +221,13 @@ export function HistoryPicker() {
                   <div className="flex items-center gap-2 text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
                     <span>{formatTimeAgo(session.lastTimestamp)}</span>
                     <span>{formatSize(session.size)}</span>
-                    {session.slug && <span className="truncate">{session.slug}</span>}
+                    {showAll && session.projectPath && (
+                      <span className="flex items-center gap-0.5 truncate" title={session.projectPath}>
+                        <FolderOpen size={9} />
+                        {lastFolder(session.projectPath)}
+                      </span>
+                    )}
+                    {!showAll && session.slug && <span className="truncate">{session.slug}</span>}
                   </div>
                 </div>
               </button>

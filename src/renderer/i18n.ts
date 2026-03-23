@@ -111,6 +111,8 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     'history.title': 'Recent Sessions',
     'history.empty': 'No recent sessions',
     'history.resume': 'Resume session',
+    'history.current': 'Current',
+    'history.all': 'All',
 
     // ─── Marketplace ───
     'marketplace.title': 'Marketplace',
@@ -284,6 +286,8 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     'history.title': 'Sessões Recentes',
     'history.empty': 'Nenhuma sessão recente',
     'history.resume': 'Retomar sessão',
+    'history.current': 'Atual',
+    'history.all': 'Todos',
 
     // ─── Marketplace ───
     'marketplace.title': 'Marketplace',

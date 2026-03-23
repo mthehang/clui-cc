@@ -188,6 +188,7 @@ function PermissionModePicker() {
     : <Question size={11} weight="bold" />
 
   const triggerColor = isPlan ? '#60a5fa' : (isBypass || isDontAsk) ? '#e57c23' : colors.textTertiary
+  const expandedUI = useThemeStore((s) => s.expandedUI)
 
   return (
     <>
@@ -199,6 +200,7 @@ function PermissionModePicker() {
         title={`Mode: ${modeLabel}`}
       >
         {triggerIcon}
+        {expandedUI && <span className="hidden sm:inline">{modeLabel}</span>}
         <CaretDown size={10} style={{ opacity: 0.6 }} />
       </button>
 
@@ -380,6 +382,7 @@ function EffortPicker() {
   }
 
   const activeOption = EFFORT_OPTIONS.find((o) => o.value === effortLevel) || EFFORT_OPTIONS[0]
+  const expandedUI = useThemeStore((s) => s.expandedUI)
 
   return (
     <>
@@ -394,6 +397,7 @@ function EffortPicker() {
         title={`Thinking effort: ${activeOption.label}`}
       >
         <Gauge size={11} weight={activeOption.weight} style={activeOption.value === 32768 ? { color: colors.accent } : undefined} />
+        {expandedUI && <span className="hidden sm:inline">{activeOption.label}</span>}
         <CaretDown size={10} style={{ opacity: 0.6 }} />
       </button>
 
@@ -654,7 +658,7 @@ export function StatusBar() {
         <EffortPicker />
       </div>
 
-      {/* Right — context % + tokens + shortcut + CLI */}
+      {/* Right — context % + CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
         {tab.lastResult?.usage?.input_tokens && tab.lastResult.usage.input_tokens > 0 && (() => {
           const contextLimit = 200_000
@@ -666,6 +670,7 @@ export function StatusBar() {
               style={{ color, opacity: pct >= 60 ? 1 : 0.7 }}
               title={`${t('status.context')}: ${formatTokenCount(tab.lastResult!.usage.input_tokens!)} / ${formatTokenCount(contextLimit)} tokens (${pct}%)`}
             >
+              {!compact && <span className="text-[9px]" style={{ opacity: 0.8 }}>{t('status.context')}</span>}
               <span style={{
                 display: 'inline-block', width: 24, height: 4, borderRadius: 2,
                 background: `${color}22`, overflow: 'hidden', position: 'relative',
@@ -679,25 +684,6 @@ export function StatusBar() {
             </span>
           )
         })()}
-        {tab.cumulativeUsage.runCount > 0 && (
-          <span
-            className="text-[10px] tabular-nums"
-            style={{ color: colors.textTertiary, opacity: 0.7 }}
-            title={`Input: ${formatTokenCount(tab.cumulativeUsage.totalInputTokens)} / Output: ${formatTokenCount(tab.cumulativeUsage.totalOutputTokens)}`}
-          >
-            {formatTokenCount(tab.cumulativeUsage.totalInputTokens + tab.cumulativeUsage.totalOutputTokens)}{!compact && ' tok'}
-          </span>
-        )}
-        {!compact && (
-          <span
-            className="text-[10px] flex items-center gap-1 opacity-60"
-            style={{ color: colors.textTertiary }}
-            title={navigator.platform?.includes('Mac') ? 'Toggle: ⌥Space or ⌘⇧K' : 'Toggle: Ctrl+Alt+Space or Ctrl+Shift+K'}
-          >
-            <Keyboard size={10} />
-            {navigator.platform?.includes('Mac') ? '⌥Space' : 'Ctrl+Alt+Space'}
-          </span>
-        )}
         <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
         <button
           onClick={handleOpenInTerminal}

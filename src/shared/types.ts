@@ -279,6 +279,7 @@ export interface SessionMeta {
   firstMessage: string | null
   lastTimestamp: string
   size: number
+  projectPath?: string
 }
 
 export interface SessionLoadMessage {
@@ -372,6 +373,7 @@ export const IPC = {
   RESET_TAB_SESSION: 'clui:reset-tab-session',
   ANIMATE_HEIGHT: 'clui:animate-height',
   LIST_SESSIONS: 'clui:list-sessions',
+  LIST_ALL_SESSIONS: 'clui:list-all-sessions',
   LOAD_SESSION: 'clui:load-session',
   LIST_LOCAL_SKILLS: 'clui:list-local-skills',
   RUN_CLI_LOGIN: 'clui:run-cli-login',

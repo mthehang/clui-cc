@@ -822,6 +822,100 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   }
 })
 
+// List ALL sessions across all project directories (unified history)
+ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
+  log('IPC LIST_ALL_SESSIONS')
+  try {
+    const projectsRoot = join(homedir(), '.claude', 'projects')
+    if (!existsSync(projectsRoot)) return []
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const allSessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number; projectPath: string }> = []
+
+    // Decode encoded project path back to original path
+    const decodeProjectPath = (encoded: string): string => {
+      if (IS_WIN) {
+        // C-Users-me-project → C:\Users\me\project
+        // First dash after single letter is the colon
+        const match = encoded.match(/^([A-Za-z])-(.*)$/)
+        if (match) {
+          return match[1] + ':\\' + match[2].replace(/-/g, '\\')
+        }
+        return encoded.replace(/-/g, '\\')
+      }
+      return encoded.replace(/-/g, '/')
+    }
+
+    const projectDirs = readdirSync(projectsRoot, { withFileTypes: true })
+      .filter((d: any) => d.isDirectory())
+
+    for (const projDir of projectDirs) {
+      const sessionsDir = join(projectsRoot, projDir.name)
+      const originalPath = decodeProjectPath(projDir.name)
+      let files: string[]
+      try {
+        files = readdirSync(sessionsDir).filter((f: string) => f.endsWith('.jsonl'))
+      } catch { continue }
+
+      for (const file of files) {
+        const fileSessionId = file.replace(/\.jsonl$/, '')
+        if (!UUID_RE.test(fileSessionId)) continue
+
+        const filePath = join(sessionsDir, file)
+        let stat: any
+        try { stat = statSync(filePath) } catch { continue }
+        if (stat.size < 100) continue
+
+        const meta: { validated: boolean; slug: string | null; firstMessage: string | null; lastTimestamp: string | null } = {
+          validated: false, slug: null, firstMessage: null, lastTimestamp: null,
+        }
+
+        await new Promise<void>((resolve) => {
+          const rl = createInterface({ input: createReadStream(filePath) })
+          let lineCount = 0
+          rl.on('line', (line: string) => {
+            lineCount++
+            // Only read first 30 lines for metadata (perf) + track last timestamp
+            try {
+              const obj = JSON.parse(line)
+              if (!meta.validated && obj.type && obj.timestamp) meta.validated = true
+              if (obj.slug && !meta.slug) meta.slug = obj.slug
+              if (obj.timestamp) meta.lastTimestamp = obj.timestamp
+              if (obj.type === 'user' && !meta.firstMessage) {
+                const content = obj.message?.content
+                if (typeof content === 'string') {
+                  meta.firstMessage = content.substring(0, 100)
+                } else if (Array.isArray(content)) {
+                  const textPart = content.find((p: any) => p.type === 'text')
+                  meta.firstMessage = textPart?.text?.substring(0, 100) || null
+                }
+              }
+            } catch {}
+          })
+          rl.on('close', () => resolve())
+        })
+
+        if (meta.validated) {
+          allSessions.push({
+            sessionId: fileSessionId,
+            slug: meta.slug,
+            firstMessage: meta.firstMessage,
+            lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
+            size: stat.size,
+            projectPath: originalPath,
+          })
+        }
+      }
+    }
+
+    allSessions.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime())
+    return allSessions.slice(0, 30)
+  } catch (err) {
+    log(`LIST_ALL_SESSIONS error: ${err}`)
+    return []
+  }
+})
+
 // Load conversation history from a session's JSONL file
 ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPath?: string } | string) => {
   const sessionId = typeof arg === 'string' ? arg : arg.sessionId
