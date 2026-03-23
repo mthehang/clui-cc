@@ -286,27 +286,14 @@ export function ConversationView() {
 
 // ─── Empty State (directory picker before first message) ───
 
-function formatAccelerator(acc: string): string {
-  const isMac = navigator.platform?.includes('Mac')
-  if (isMac) {
-    return acc.replace('Ctrl', '⌃').replace('Alt', '⌥').replace('Shift', '⇧').replace('Meta', '⌘').replace(/\+/g, ' ')
-  }
-  return acc
-}
-
 function EmptyState() {
   const setBaseDirectory = useSessionStore((s) => s.setBaseDirectory)
   const staticInfo = useSessionStore((s) => s.staticInfo)
-  const customShortcut = useThemeStore((s) => s.customShortcut)
   const colors = useColors()
   const t = useT()
   const [copied, setCopied] = useState(false)
   const [loggingIn, setLoggingIn] = useState(false)
   const [retrying, setRetrying] = useState(false)
-
-  const isMac = navigator.platform?.includes('Mac')
-  const defaultDisplay = isMac ? '⌥ Space' : 'Ctrl+Alt+Space'
-  const shortcutDisplay = customShortcut ? formatAccelerator(customShortcut) : defaultDisplay
 
   const cliMissing = staticInfo?.version === 'unknown'
   const authMissing = !cliMissing && !staticInfo?.email
@@ -450,25 +437,26 @@ function EmptyState() {
   // ─── Normal empty state (everything OK) ───
   return (
     <div
-      className="flex flex-col items-center justify-center px-4 py-3 gap-1.5"
-      style={{ minHeight: 80 }}
+      className="flex flex-col items-center justify-center px-4 py-4 gap-3"
+      style={{ minHeight: 90 }}
     >
+      <span className="text-[15px] font-medium" style={{ color: colors.textPrimary }}>
+        {t('chat.empty.title')}
+      </span>
       <button
         onClick={handleChooseFolder}
-        className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg transition-colors"
+        className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg transition-colors"
         style={{
           color: colors.accent,
-          background: colors.surfaceHover,
-          border: 'none',
+          background: colors.accent + '18',
+          border: `1px solid ${colors.accent}44`,
           cursor: 'pointer',
+          fontWeight: 500,
         }}
       >
         <FolderOpen size={13} />
-        {t('chat.empty.title')}
+        {t('chat.empty.chooseDir')}
       </button>
-      <span className="text-[11px]" style={{ color: colors.textTertiary }}>
-        Press <strong style={{ color: colors.textSecondary }}>{shortcutDisplay}</strong> to show/hide this overlay
-      </span>
     </div>
   )
 }

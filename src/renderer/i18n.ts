@@ -42,6 +42,7 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     // ─── Conversation View ───
     'chat.empty.title': 'What can I help you with?',
     'chat.empty.subtitle': 'Ask me anything or use / for commands',
+    'chat.empty.chooseDir': 'Choose a directory',
     'chat.copy': 'Copy response',
     'chat.tool.running': 'Running...',
     'chat.tool.completed': 'Completed',
@@ -215,8 +216,9 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     'input.voice.stop': 'Parar gravação',
 
     // ─── Conversa ───
-    'chat.empty.title': 'Como posso ajudar?',
+    'chat.empty.title': 'Como posso te ajudar?',
     'chat.empty.subtitle': 'Pergunte qualquer coisa ou use / para comandos',
+    'chat.empty.chooseDir': 'Escolher diretório',
     'chat.copy': 'Copiar resposta',
     'chat.tool.running': 'Executando...',
     'chat.tool.completed': 'Concluído',

@@ -148,9 +148,12 @@ function ShortcutRecorderField({
     const cancel = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); setRecording(false); setPreview('') }
     }
+    // Stop recording if user clicks elsewhere
+    const blur = () => { setRecording(false); setPreview('') }
     window.addEventListener('keydown', handler, true)
     window.addEventListener('keyup', cancel, true)
-    return () => { window.removeEventListener('keydown', handler, true); window.removeEventListener('keyup', cancel, true) }
+    window.addEventListener('mousedown', blur)
+    return () => { window.removeEventListener('keydown', handler, true); window.removeEventListener('keyup', cancel, true); window.removeEventListener('mousedown', blur) }
   }, [recording, onChange, defaultAccelerator])
 
   return (
@@ -163,7 +166,7 @@ function ShortcutRecorderField({
           style={{
             background: recording ? colors.accent + '22' : colors.surfacePrimary,
             border: `1px solid ${recording ? colors.accent : colors.containerBorder}`,
-            color: recording ? colors.accent : undefined,
+            color: recording ? colors.accent : colors.textSecondary,
             minWidth: 60,
             textAlign: 'center',
           }}

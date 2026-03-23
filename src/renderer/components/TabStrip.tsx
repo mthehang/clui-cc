@@ -94,13 +94,13 @@ export function TabStrip({ rcActive, rcTabIds, onRcClick }: { rcActive?: boolean
                   onClick={() => selectTab(tab.id)}
                   className="group flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0 max-w-[160px] transition-all duration-150"
                   style={{
-                    background: isActive ? colors.tabActive : 'transparent',
-                    border: isActive ? `1px solid ${colors.tabActiveBorder}` : '1px solid transparent',
+                    background: isActive ? colors.tabActive : (tab.hasUnread && !isActive ? colors.statusRunning + '22' : 'transparent'),
+                    border: isActive ? `1px solid ${colors.tabActiveBorder}` : (tab.hasUnread && !isActive ? `1px solid ${colors.statusRunning}44` : '1px solid transparent'),
                     borderRadius: 9999,
                     padding: '4px 10px',
                     fontSize: 12,
-                    color: isActive ? colors.textPrimary : colors.textTertiary,
-                    fontWeight: isActive ? 500 : 400,
+                    color: isActive ? colors.textPrimary : (tab.hasUnread ? colors.statusRunning : colors.textTertiary),
+                    fontWeight: isActive ? 500 : (tab.hasUnread ? 500 : 400),
                   }}
                 >
                   <StatusDot status={tab.status} hasUnread={tab.hasUnread} hasPermission={tab.permissionQueue.length > 0} permissionCount={tab.permissionQueue.length} />
