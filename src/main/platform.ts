@@ -109,6 +109,9 @@ export function findClaudeBinary(): string {
     ? [
         join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), 'npm', 'claude.cmd'),
         join(home, '.npm-global', 'claude.cmd'),
+        join(process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'pnpm', 'claude.cmd'),
+        join(home, 'scoop', 'shims', 'claude.cmd'),
+        join(process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Volta', 'bin', 'claude.cmd'),
       ]
     : [
         '/usr/local/bin/claude',
