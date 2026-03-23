@@ -5,6 +5,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { HistoryPicker } from './HistoryPicker'
 import { SettingsPopover } from './SettingsPopover'
 import { useColors } from '../theme'
+import { useT } from '../i18n'
 import type { TabStatus } from '../../shared/types'
 
 function StatusDot({ status, hasUnread, hasPermission, permissionCount }: { status: TabStatus; hasUnread: boolean; hasPermission: boolean; permissionCount: number }) {
@@ -49,13 +50,14 @@ function StatusDot({ status, hasUnread, hasPermission, permissionCount }: { stat
   )
 }
 
-export function TabStrip() {
+export function TabStrip({ rcActive, rcTabIds, onRcClick }: { rcActive?: boolean; rcTabIds?: Set<string>; onRcClick?: () => void }) {
   const tabs = useSessionStore((s) => s.tabs)
   const activeTabId = useSessionStore((s) => s.activeTabId)
   const selectTab = useSessionStore((s) => s.selectTab)
   const createTab = useSessionStore((s) => s.createTab)
   const closeTab = useSessionStore((s) => s.closeTab)
   const colors = useColors()
+  const t = useT()
 
   return (
     <div
@@ -103,7 +105,7 @@ export function TabStrip() {
                 >
                   <StatusDot status={tab.status} hasUnread={tab.hasUnread} hasPermission={tab.permissionQueue.length > 0} permissionCount={tab.permissionQueue.length} />
                   <span className="truncate flex-1">{tab.title}</span>
-                  {tab.remoteEnabled && (
+                  {rcTabIds?.has(tab.id) && (
                     <Broadcast size={10} weight="fill" style={{ color: colors.accent, flexShrink: 0 }} />
                   )}
                   {tabs.length > 1 && (
@@ -129,11 +131,21 @@ export function TabStrip() {
 
       {/* Pinned action buttons — always visible on the right */}
       <div className="flex items-center gap-0.5 flex-shrink-0 ml-1 pr-2">
+        {rcActive && (
+          <button
+            onClick={onRcClick}
+            className="flex items-center justify-center w-6 h-6 rounded-full transition-colors"
+            style={{ color: colors.accent }}
+            title={t('tabs.rc.show')}
+          >
+            <Broadcast size={14} weight="fill" />
+          </button>
+        )}
         <button
           onClick={() => createTab()}
           className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-colors"
           style={{ color: colors.textTertiary }}
-          title="New tab"
+          title={t('tabs.new')}
         >
           <Plus size={14} />
         </button>

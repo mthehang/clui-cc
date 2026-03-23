@@ -72,7 +72,7 @@ export class ControlPlane extends EventEmitter {
   /** Per-run tokens: requestId → runToken (for cleanup on exit/error) */
   private runTokens = new Map<string, string>()
   /** Global permission mode: 'ask' shows cards, 'auto' auto-approves, 'bypass' bypasses all */
-  private permissionMode: 'ask' | 'auto' | 'bypass' = 'ask'
+  private permissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass' = 'ask'
   /** Resolves when the permission server is ready (or failed). Dispatch awaits this. */
   private hookServerReady: Promise<void>
 
@@ -107,8 +107,8 @@ export class ControlPlane extends EventEmitter {
 
       log(`Permission request [${questionId}]: tool=${toolRequest.tool_name} tab=${tabId.substring(0, 8)}… mode=${this.permissionMode}`)
 
-      // Auto/bypass mode: immediately allow without showing UI
-      if (this.permissionMode === 'auto' || this.permissionMode === 'bypass') {
+      // Auto/bypass/dontAsk mode: immediately allow without showing UI
+      if (this.permissionMode === 'auto' || this.permissionMode === 'bypass' || this.permissionMode === 'dontAsk' || this.permissionMode === 'acceptEdits') {
         this.permissionServer.respondToPermission(questionId, 'allow', `${this.permissionMode} mode`)
         return
       }
@@ -482,7 +482,7 @@ export class ControlPlane extends EventEmitter {
    * Set global permission mode.
    * 'ask' = show permission cards, 'auto' = auto-approve all tool calls.
    */
-  setPermissionMode(mode: 'ask' | 'auto' | 'bypass'): void {
+  setPermissionMode(mode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass'): void {
     log(`Permission mode set to: ${mode}`)
     this.permissionMode = mode
   }

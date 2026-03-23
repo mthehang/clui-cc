@@ -117,9 +117,15 @@ export class RunManager extends EventEmitter {
       '--include-partial-messages',
     ]
 
-    const cliPerm = options.permissionMode === 'bypass' ? 'bypassPermissions'
-      : options.permissionMode === 'auto' ? 'autoApprove'
-      : 'default' // 'ask' and 'plan' both map to 'default'
+    const cliPermMap: Record<string, string> = {
+      plan: 'plan',
+      ask: 'default',
+      acceptEdits: 'acceptEdits',
+      auto: 'auto',
+      dontAsk: 'dontAsk',
+      bypass: 'bypassPermissions',
+    }
+    const cliPerm = cliPermMap[options.permissionMode || 'ask'] || 'default'
     args.push('--permission-mode', cliPerm)
 
     if (options.sessionId) {
@@ -130,9 +136,6 @@ export class RunManager extends EventEmitter {
     }
     if (options.thinkingBudget) {
       args.push('--thinking', `budget:${options.thinkingBudget}`)
-    }
-    if (options.remoteEnabled) {
-      args.push('--rc')
     }
     if (options.addDirs && options.addDirs.length > 0) {
       for (const dir of options.addDirs) {

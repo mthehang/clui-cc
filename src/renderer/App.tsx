@@ -12,12 +12,14 @@ import { useClaudeEvents } from './hooks/useClaudeEvents'
 import { useHealthReconciliation } from './hooks/useHealthReconciliation'
 import { useSessionStore } from './stores/sessionStore'
 import { useColors, useThemeStore, spacing } from './theme'
+import { useT } from './i18n'
 
 const TRANSITION = { duration: 0.26, ease: [0.4, 0, 0.1, 1] as const }
 
 export default function App() {
   useClaudeEvents()
   useHealthReconciliation()
+  const t = useT()
 
   const activeTabStatus = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.status)
   const addAttachments = useSessionStore((s) => s.addAttachments)
@@ -102,9 +104,9 @@ export default function App() {
     }
   }, [])
 
-  // ─── Shift+Tab cycles permission modes (Plan → Ask → Auto → Bypass) ───
+  // ─── Shift+Tab cycles permission modes (Plan → Ask → AcceptEdits → Auto → DontAsk → Bypass) ───
   useEffect(() => {
-    const PERM_CYCLE: Array<'plan' | 'ask' | 'auto' | 'bypass'> = ['plan', 'ask', 'auto', 'bypass']
+    const PERM_CYCLE: Array<'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass'> = ['plan', 'ask', 'acceptEdits', 'auto', 'dontAsk', 'bypass']
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault()
@@ -145,8 +147,36 @@ export default function App() {
   const usagePanelOpen = useSessionStore((s) => s.usagePanelOpen)
   const thinkingEnabled = useSessionStore((s) => s.thinkingEnabled)
   const activeTab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
-  const remoteEnabled = activeTab?.remoteEnabled ?? false
+
   const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
+
+  // ─── Remote Control daemon state ───
+  const [rcUrl, setRcUrl] = useState<string | null>(null)
+  const [rcActive, setRcActive] = useState(false)
+  const [rcPopupVisible, setRcPopupVisible] = useState(false)
+  const [rcTabIds, setRcTabIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    const unsubUrl = window.clui.onRcUrl((tabId, url) => {
+      setRcTabIds((prev) => new Set(prev).add(tabId))
+      const s = useSessionStore.getState()
+      if (tabId === s.activeTabId) {
+        setRcUrl(url)
+        setRcActive(true)
+        setRcPopupVisible(true)
+      }
+    })
+    const unsubStopped = window.clui.onRcStopped((tabId) => {
+      setRcTabIds((prev) => { const next = new Set(prev); next.delete(tabId); return next })
+      const s = useSessionStore.getState()
+      if (tabId === s.activeTabId) {
+        setRcUrl(null)
+        setRcActive(false)
+        setRcPopupVisible(false)
+      }
+    })
+    return () => { unsubUrl(); unsubStopped() }
+  }, [])
 
   // Layout dimensions — expandedUI widens and heightens the panel
   const contentWidth = expandedUI ? 700 : spacing.contentWidth
@@ -280,7 +310,7 @@ export default function App() {
           >
             {/* Tab strip — always mounted */}
             <div className="no-drag">
-              <TabStrip />
+              <TabStrip rcActive={rcActive} rcTabIds={rcTabIds} onRcClick={() => setRcPopupVisible((v) => !v)} />
             </div>
 
             {/* Body — chat history only; the marketplace is a separate overlay above */}
@@ -372,27 +402,101 @@ export default function App() {
                 >
                   <Brain size={17} weight={thinkingEnabled ? 'fill' : 'regular'} />
                 </button>
-                {/* btn-r2: Remote control (behind, rightmost) */}
+                {/* btn-r2: Remote control toggle — spawns/kills background daemon */}
                 <button
                   className="stack-btn stack-btn-r2 glass-surface"
-                  title={remoteEnabled ? 'Remote control ON' : 'Remote control OFF'}
-                  onClick={() => {
+                  title={rcActive && rcUrl ? 'Remote control ON — click to stop' : rcActive ? 'Remote control connecting...' : (activeTab?.claudeSessionId ? 'Start remote control' : 'Send a message first to start a session')}
+                  onClick={async () => {
                     const s = useSessionStore.getState()
                     const tabId = s.activeTabId
                     const tab = s.tabs.find((t) => t.id === tabId)
                     if (!tab) return
-                    const next = !tab.remoteEnabled
-                    useSessionStore.setState((prev) => ({
-                      tabs: prev.tabs.map((t) => t.id === tabId ? { ...t, remoteEnabled: next } : t),
-                    }))
+
+                    if (rcActive) {
+                      // Stop daemon
+                      await window.clui.rcStop(tabId)
+                      setRcActive(false)
+                      setRcUrl(null)
+                    } else {
+                      // Need an active session to resume
+                      if (!tab.claudeSessionId) return
+                      setRcActive(true) // Optimistic — shows spinner state
+                      try {
+                        const result = await window.clui.rcStart(tabId, tab.claudeSessionId, tab.workingDirectory)
+                        if (!result.ok) {
+                          setRcActive(false)
+                          useSessionStore.getState().addSystemMessage(`Remote Control failed to start: ${(result as any).error || 'unknown error'}`)
+                        }
+                      } catch (err: any) {
+                        setRcActive(false)
+                        useSessionStore.getState().addSystemMessage(`Remote Control failed to start: ${err.message || 'unknown error'}`)
+                      }
+                    }
                   }}
-                  style={remoteEnabled ? { color: colors.accent } : undefined}
+                  style={rcActive ? { color: colors.accent } : (!activeTab?.claudeSessionId ? { opacity: 0.4 } : undefined)}
                 >
-                  <Broadcast size={17} weight={remoteEnabled ? 'fill' : 'regular'} />
+                  <Broadcast size={17} weight={rcActive ? 'fill' : 'regular'} />
                 </button>
               </div>
             </div>
           </div>
+
+          {/* Remote Control URL popup — overlays chat area */}
+          <AnimatePresence>
+            {rcActive && rcUrl && rcPopupVisible && (
+              <motion.div
+                data-clui-ui
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.15 }}
+                style={{
+                  position: 'absolute', top: 48, left: '50%', transform: 'translateX(-50%)',
+                  background: colors.popoverBg, backdropFilter: 'blur(20px)',
+                  border: `1px solid ${colors.popoverBorder}`,
+                  borderRadius: 12, padding: '12px 16px', zIndex: 200,
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                  boxShadow: colors.popoverShadow, width: 300,
+                  pointerEvents: 'auto',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: colors.textPrimary, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Broadcast size={14} weight="fill" style={{ color: colors.accent }} />
+                    {t('rc.title')}
+                  </div>
+                  <button
+                    onClick={() => setRcPopupVisible(false)}
+                    style={{ background: 'none', border: 'none', color: colors.textTertiary, cursor: 'pointer', padding: 2, lineHeight: 1, fontSize: 14 }}
+                  >✕</button>
+                </div>
+                <div style={{ fontSize: 11, color: colors.textSecondary }}>{t('rc.subtitle')}</div>
+                <input
+                  readOnly
+                  value={rcUrl}
+                  onClick={(e) => e.currentTarget.select()}
+                  style={{
+                    fontSize: 11, padding: '6px 8px', borderRadius: 8,
+                    border: `1px solid ${colors.border}`, background: colors.bgSecondary,
+                    color: colors.textPrimary, width: '100%', outline: 'none',
+                    fontFamily: 'monospace',
+                  }}
+                />
+                <button
+                  onClick={() => { navigator.clipboard.writeText(rcUrl) }}
+                  style={{
+                    fontSize: 11, padding: '5px 12px', borderRadius: 8,
+                    border: 'none', background: colors.accent,
+                    color: '#fff', cursor: 'pointer', alignSelf: 'flex-end',
+                    fontWeight: 500,
+                  }}
+                >
+                  {t('rc.copy')}
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
         </motion.div>
       </div>
     </PopoverLayerProvider>

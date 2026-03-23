@@ -76,17 +76,11 @@ function downloadWhisperBinary() {
   const tag = release.tag_name
   log(`Latest release: ${tag}`)
 
-  // Find Windows x64 zip: prefer cuBLAS/CUDA build (GPU), fallback to plain
+  // Find Windows x64 zip: CPU-only build (CUDA DLLs downloaded on-demand at runtime)
   const asset = release.assets.find(a => {
     const name = a.name.toLowerCase()
-    return name.includes('x64') && name.endsWith('.zip') && name.includes('cublas-12')
-  }) || release.assets.find(a => {
-    const name = a.name.toLowerCase()
-    return name.includes('x64') && name.endsWith('.zip') && name.includes('cublas')
-  }) || release.assets.find(a => {
-    const name = a.name.toLowerCase()
     return name.includes('win') && name.includes('x64') && name.endsWith('.zip')
-      && !name.includes('cuda') && !name.includes('vulkan') && !name.includes('openvino')
+      && !name.includes('cuda') && !name.includes('cublas') && !name.includes('vulkan') && !name.includes('openvino')
   }) || release.assets.find(a => {
     const name = a.name.toLowerCase()
     return name.includes('bin-x64') && name.endsWith('.zip')

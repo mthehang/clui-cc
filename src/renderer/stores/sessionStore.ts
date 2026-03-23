@@ -59,13 +59,15 @@ interface State {
   /** User's preferred model override (null = use default) */
   preferredModel: string | null
   /** Global permission mode: 'ask' shows cards, 'auto' auto-approves, 'bypass' bypasses all, 'plan' plans first */
-  permissionMode: 'ask' | 'auto' | 'bypass' | 'plan'
+  permissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass'
   /** Thinking effort level (token budget) — null means default */
   effortLevel: number | null
   /** Whether extended thinking is enabled */
   thinkingEnabled: boolean
   /** Response language ('auto' = no override) */
   responseLanguage: string
+  /** App UI language */
+  appLanguage: 'en' | 'pt-BR'
   /** Persistent global system prompt */
   globalRules: string
 
@@ -91,7 +93,7 @@ interface State {
   loadLocalSkills: () => Promise<void>
   initStaticInfo: () => Promise<void>
   setPreferredModel: (model: string | null) => void
-  setPermissionMode: (mode: 'ask' | 'auto' | 'bypass' | 'plan') => void
+  setPermissionMode: (mode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass') => void
   setEffortLevel: (level: number | null) => void
   createTab: () => Promise<string>
   selectTab: (tabId: string) => void
@@ -166,7 +168,6 @@ function makeLocalTab(): TabState {
     workingDirectory: '~',
     hasChosenDirectory: false,
     additionalDirs: [],
-    remoteEnabled: false,
   }
 }
 
@@ -178,10 +179,11 @@ export const useSessionStore = create<State>((set, get) => ({
   isExpanded: false,
   staticInfo: null,
   preferredModel: null,
-  permissionMode: 'ask',
+  permissionMode: 'auto',
   effortLevel: null,
   thinkingEnabled: true,
   responseLanguage: 'auto',
+  appLanguage: 'en' as const,
   globalRules: '',
 
   // Local skills
@@ -238,10 +240,11 @@ export const useSessionStore = create<State>((set, get) => ({
           let mode = settings.permissionMode || 'ask'
           if (settings.planMode && mode === 'ask') mode = 'plan'
           set({
-            permissionMode: mode as 'ask' | 'auto' | 'bypass' | 'plan',
+            permissionMode: mode as 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass',
             effortLevel: settings.effortLevel ?? null,
             thinkingEnabled: settings.thinkingEnabled !== false,
             responseLanguage: settings.responseLanguage || 'auto',
+            appLanguage: (settings.appLanguage === 'pt-BR' ? 'pt-BR' : 'en') as 'en' | 'pt-BR',
             globalRules: settings.globalRules || '',
           })
         }
@@ -260,9 +263,7 @@ export const useSessionStore = create<State>((set, get) => ({
 
   setPermissionMode: (mode) => {
     set({ permissionMode: mode })
-    // 'plan' is UI-only — CLI gets 'ask'; also persist planMode legacy flag
-    const cliMode = mode === 'plan' ? 'ask' : mode
-    window.clui.setPermissionMode(cliMode)
+    window.clui.setPermissionMode(mode)
     window.clui.saveSettings({ permissionMode: mode, planMode: mode === 'plan' })
   },
 
@@ -739,7 +740,7 @@ export const useSessionStore = create<State>((set, get) => ({
       model: preferredModel || undefined,
       addDirs: tab.additionalDirs.length > 0 ? tab.additionalDirs : undefined,
       thinkingBudget: effectiveThinkingBudget,
-      remoteEnabled: tab.remoteEnabled || undefined,
+
       systemPrompt,
       permissionMode: isPlan ? 'ask' : undefined,
     }).catch((err: Error) => {

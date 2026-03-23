@@ -11,6 +11,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
 import { useColors, useThemeStore } from '../theme'
+import { useT } from '../i18n'
 import { InlineDiff } from './InlineDiff'
 import type { Message } from '../../shared/types'
 
@@ -70,6 +71,7 @@ export function ConversationView() {
   const prevTabIdRef = useRef(activeTabId)
   const colors = useColors()
   const expandedUI = useThemeStore((s) => s.expandedUI)
+  const t = useT()
 
   const tab = tabs.find((t) => t.id === activeTabId)
 
@@ -251,7 +253,7 @@ export function ConversationView() {
           )}
 
           {isDead && (
-            <span style={{ color: colors.statusError, fontSize: 11 }}>Session ended unexpectedly</span>
+            <span style={{ color: colors.statusError, fontSize: 11 }}>{t('chat.session.ended')}</span>
           )}
 
           {isFailed && (
@@ -294,20 +296,158 @@ function formatAccelerator(acc: string): string {
 
 function EmptyState() {
   const setBaseDirectory = useSessionStore((s) => s.setBaseDirectory)
+  const staticInfo = useSessionStore((s) => s.staticInfo)
   const customShortcut = useThemeStore((s) => s.customShortcut)
   const colors = useColors()
+  const t = useT()
+  const [copied, setCopied] = useState(false)
+  const [loggingIn, setLoggingIn] = useState(false)
+  const [retrying, setRetrying] = useState(false)
 
   const isMac = navigator.platform?.includes('Mac')
   const defaultDisplay = isMac ? '⌥ Space' : 'Ctrl+Alt+Space'
   const shortcutDisplay = customShortcut ? formatAccelerator(customShortcut) : defaultDisplay
 
-  const handleChooseFolder = async () => {
-    const dir = await window.clui.selectDirectory()
-    if (dir) {
-      setBaseDirectory(dir)
-    }
+  const cliMissing = staticInfo?.version === 'unknown'
+  const authMissing = !cliMissing && !staticInfo?.email
+
+  const handleRetry = async () => {
+    setRetrying(true)
+    await useSessionStore.getState().initStaticInfo()
+    setRetrying(false)
   }
 
+  const handleChooseFolder = async () => {
+    const dir = await window.clui.selectDirectory()
+    if (dir) setBaseDirectory(dir)
+  }
+
+  // ─── CLI not installed ───
+  if (cliMissing) {
+    const installCmd = t('setup.cli.missing.command')
+    return (
+      <div className="flex flex-col items-center justify-center px-5 py-6 gap-3" style={{ minHeight: 120 }}>
+        <Terminal size={28} weight="duotone" style={{ color: colors.accent, opacity: 0.8 }} />
+        <div className="text-center">
+          <div className="text-[13px] font-semibold mb-1" style={{ color: colors.textPrimary }}>
+            {t('setup.cli.missing.title')}
+          </div>
+          <div className="text-[11px]" style={{ color: colors.textSecondary, maxWidth: 260, lineHeight: 1.4 }}>
+            {t('setup.cli.missing.subtitle')}
+          </div>
+        </div>
+        {/* Install command with copy */}
+        <div
+          className="flex items-center gap-2 rounded-lg px-3 py-2 w-full"
+          style={{
+            background: colors.surfacePrimary,
+            border: `1px solid ${colors.containerBorder}`,
+            maxWidth: 320,
+          }}
+        >
+          <code className="flex-1 text-[11px] font-mono select-all" style={{ color: colors.accent }}>
+            {installCmd}
+          </code>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(installCmd)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 2000)
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] transition-colors"
+            style={{
+              background: copied ? colors.statusCompleteBg : colors.surfaceHover,
+              color: copied ? colors.statusComplete : colors.textTertiary,
+              border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {copied ? <Check size={10} /> : <Copy size={10} />}
+            {copied ? t('general.copy') : t('setup.cli.missing.copy')}
+          </button>
+        </div>
+        <div className="text-[10px]" style={{ color: colors.textTertiary }}>
+          {t('setup.cli.missing.prereq')}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.clui.openExternal('https://docs.anthropic.com/en/docs/claude-code/overview')}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] transition-colors"
+            style={{ color: colors.accent, background: colors.surfaceHover, border: 'none', cursor: 'pointer' }}
+          >
+            <Globe size={12} />
+            {t('setup.cli.missing.docs')}
+          </button>
+          <button
+            onClick={handleRetry}
+            disabled={retrying}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] transition-colors"
+            style={{
+              color: retrying ? colors.textTertiary : colors.textSecondary,
+              background: colors.surfaceHover, border: 'none',
+              cursor: retrying ? 'wait' : 'pointer',
+            }}
+          >
+            <ArrowCounterClockwise size={12} className={retrying ? 'animate-spin' : ''} />
+            {t('setup.cli.missing.retry')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── Not authenticated ───
+  if (authMissing) {
+    return (
+      <div className="flex flex-col items-center justify-center px-5 py-6 gap-3" style={{ minHeight: 120 }}>
+        <Robot size={28} weight="duotone" style={{ color: colors.accent, opacity: 0.8 }} />
+        <div className="text-center">
+          <div className="text-[13px] font-semibold mb-1" style={{ color: colors.textPrimary }}>
+            {t('setup.auth.missing.title')}
+          </div>
+          <div className="text-[11px]" style={{ color: colors.textSecondary, maxWidth: 260, lineHeight: 1.4 }}>
+            {t('setup.auth.missing.subtitle')}
+          </div>
+        </div>
+        <button
+          onClick={async () => {
+            setLoggingIn(true)
+            await window.clui.runCliLogin()
+            // Give the browser login a moment, then re-check
+            setTimeout(handleRetry, 3000)
+          }}
+          disabled={loggingIn}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
+          style={{
+            background: loggingIn ? colors.surfaceHover : colors.accent,
+            color: loggingIn ? colors.textTertiary : '#fff',
+            border: 'none',
+            cursor: loggingIn ? 'wait' : 'pointer',
+          }}
+        >
+          {loggingIn ? (
+            <SpinnerGap size={13} className="animate-spin" />
+          ) : (
+            <Globe size={13} />
+          )}
+          {t('setup.auth.login')}
+        </button>
+        <div className="text-[10px]" style={{ color: colors.textTertiary, maxWidth: 240, textAlign: 'center' }}>
+          {t('setup.auth.apikey')}
+        </div>
+        <button
+          onClick={handleRetry}
+          disabled={retrying}
+          className="flex items-center gap-1 text-[10px] transition-colors"
+          style={{ color: colors.textTertiary, background: 'none', border: 'none', cursor: 'pointer' }}
+        >
+          <ArrowCounterClockwise size={10} className={retrying ? 'animate-spin' : ''} />
+          {t('setup.auth.retry')}
+        </button>
+      </div>
+    )
+  }
+
+  // ─── Normal empty state (everything OK) ───
   return (
     <div
       className="flex flex-col items-center justify-center px-4 py-3 gap-1.5"
@@ -324,7 +464,7 @@ function EmptyState() {
         }}
       >
         <FolderOpen size={13} />
-        Choose folder
+        {t('chat.empty.title')}
       </button>
       <span className="text-[11px]" style={{ color: colors.textTertiary }}>
         Press <strong style={{ color: colors.textSecondary }}>{shortcutDisplay}</strong> to show/hide this overlay
@@ -338,6 +478,7 @@ function EmptyState() {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   const colors = useColors()
+  const t = useT()
 
   const handleCopy = async () => {
     try {
@@ -360,10 +501,10 @@ function CopyButton({ text }: { text: string }) {
         color: copied ? colors.statusComplete : colors.textTertiary,
         border: 'none',
       }}
-      title="Copy response"
+      title={t('chat.copy')}
     >
       {copied ? <Check size={11} /> : <Copy size={11} />}
-      <span>{copied ? 'Copied' : 'Copy'}</span>
+      <span>{t('general.copy')}</span>
     </motion.button>
   )
 }
@@ -676,6 +817,7 @@ function ToolGroup({ tools, skipMotion }: { tools: Message[]; skipMotion?: boole
   const hasRunning = tools.some((t) => t.toolStatus === 'running')
   const [expanded, setExpanded] = useState(false)
   const colors = useColors()
+  const t = useT()
 
   const isOpen = expanded || hasRunning
 
@@ -743,13 +885,13 @@ function ToolGroup({ tools, skipMotion }: { tools: Message[]; skipMotion?: boole
                           color: tool.toolStatus === 'error' ? colors.statusError : colors.textMuted,
                         }}
                       >
-                        Result
+                        {t('chat.tool.completed')}
                       </span>
                     )}
 
                     {isRunning && (
                       <span className="text-[10px] mt-0.5 block" style={{ color: colors.textMuted }}>
-                        running...
+                        {t('chat.tool.running')}
                       </span>
                     )}
 

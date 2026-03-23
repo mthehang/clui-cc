@@ -5,6 +5,7 @@ import { Clock, ChatCircle } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
+import { useT } from '../i18n'
 import type { SessionMeta } from '../../shared/types'
 
 function formatTimeAgo(isoDate: string): string {
@@ -26,6 +27,7 @@ function formatSize(bytes: number): string {
 }
 
 export function HistoryPicker() {
+  const t = useT()
   const resumeSession = useSessionStore((s) => s.resumeSession)
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const activeTab = useSessionStore(
@@ -110,7 +112,7 @@ export function HistoryPicker() {
         onClick={handleToggle}
         className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-colors"
         style={{ color: colors.textTertiary }}
-        title="Resume a previous session"
+        title={t('history.resume')}
       >
         <Clock size={13} />
       </button>
@@ -143,7 +145,7 @@ export function HistoryPicker() {
           }}
         >
           <div className="px-3 py-2 text-[11px] font-medium flex-shrink-0" style={{ color: colors.textTertiary, borderBottom: `1px solid ${colors.popoverBorder}` }}>
-            Recent Sessions
+            {t('history.title')}
           </div>
 
           <div className="overflow-y-auto py-1" style={{ maxHeight: pos.maxHeight != null ? undefined : 180 }}>
@@ -155,7 +157,7 @@ export function HistoryPicker() {
 
             {!loading && sessions.length === 0 && (
               <div className="px-3 py-4 text-center text-[11px]" style={{ color: colors.textTertiary }}>
-                No previous sessions found
+                {t('history.empty')}
               </div>
             )}
 

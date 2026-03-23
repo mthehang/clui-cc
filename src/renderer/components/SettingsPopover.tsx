@@ -7,6 +7,7 @@ import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
+import { useT, AVAILABLE_LANGUAGES } from '../i18n'
 
 function RowToggle({
   checked,
@@ -160,9 +161,9 @@ function ShortcutRecorderField({
           onClick={() => { setRecording(true); setPreview('') }}
           className="px-1.5 py-0.5 rounded text-[10px] cursor-pointer transition-colors"
           style={{
-            background: recording ? colors.accentPrimary + '22' : colors.surfacePrimary,
-            border: `1px solid ${recording ? colors.accentPrimary : colors.containerBorder}`,
-            color: recording ? colors.accentPrimary : undefined,
+            background: recording ? colors.accent + '22' : colors.surfacePrimary,
+            border: `1px solid ${recording ? colors.accent : colors.containerBorder}`,
+            color: recording ? colors.accent : undefined,
             minWidth: 60,
             textAlign: 'center',
           }}
@@ -186,6 +187,7 @@ function ShortcutRecorderField({
 }
 
 function ShortcutsSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const t = useT()
   const customShortcut = useThemeStore((s) => s.customShortcut)
   const setCustomShortcut = useThemeStore((s) => s.setCustomShortcut)
   const [transcriptionShortcut, setTranscriptionShortcut] = useState<string | null>(null)
@@ -200,7 +202,7 @@ function ShortcutsSection({ colors }: { colors: ReturnType<typeof useColors> }) 
     <div className="flex flex-col gap-1.5">
         <ShortcutRecorderField
           colors={colors}
-          label="Hide/Show"
+          label={t('settings.shortcuts.global')}
           value={customShortcut}
           defaultAccelerator={DEFAULT_SHORTCUT}
           defaultDisplay={DEFAULT_DISPLAY}
@@ -210,10 +212,10 @@ function ShortcutsSection({ colors }: { colors: ReturnType<typeof useColors> }) 
         />
         <ShortcutRecorderField
           colors={colors}
-          label="Transcription"
+          label={t('settings.shortcuts.transcription')}
           value={transcriptionShortcut}
           defaultAccelerator={null}
-          defaultDisplay="None"
+          defaultDisplay={t('general.none')}
           onChange={(acc) => {
             setTranscriptionShortcut(acc)
             window.clui.setTranscriptionShortcut(acc)
@@ -226,6 +228,7 @@ function ShortcutsSection({ colors }: { colors: ReturnType<typeof useColors> }) 
 /* ─── Startup section ─── */
 
 function StartupSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const t = useT()
   const [autoStart, setAutoStart] = useState(false)
   const [startHidden, setStartHidden] = useState(false)
 
@@ -239,7 +242,7 @@ function StartupSection({ colors }: { colors: ReturnType<typeof useColors> }) {
   return (
     <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>Start with Windows</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.startup.auto')}</span>
           <RowToggle
             checked={autoStart}
             onChange={(next) => {
@@ -247,11 +250,11 @@ function StartupSection({ colors }: { colors: ReturnType<typeof useColors> }) {
               window.clui.saveSettings({ autoStart: next })
             }}
             colors={colors}
-            label="Start with Windows"
+            label={t('settings.startup.auto')}
           />
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>Start hidden</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.startup.hidden')}</span>
           <RowToggle
             checked={startHidden}
             onChange={(next) => {
@@ -259,7 +262,7 @@ function StartupSection({ colors }: { colors: ReturnType<typeof useColors> }) {
               window.clui.saveSettings({ startHidden: next })
             }}
             colors={colors}
-            label="Start hidden"
+            label={t('settings.startup.hidden')}
           />
         </div>
     </div>
@@ -283,39 +286,64 @@ const LANGUAGES = [
 ] as const
 
 function LanguageSection({ colors }: { colors: ReturnType<typeof useColors> }) {
-  const [lang, setLang] = useState('auto')
+  const t = useT()
+  const appLanguage = useSessionStore((s) => s.appLanguage)
+  const [responseLang, setResponseLang] = useState('auto')
 
   useEffect(() => {
     window.clui.getSettings().then((s) => {
-      setLang(s.responseLanguage || 'auto')
+      setResponseLang(s.responseLanguage || 'auto')
     }).catch(() => {})
   }, [])
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-1.5">
-        <Translate size={14} style={{ color: colors.textTertiary }} />
-        <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-          Response language
-        </div>
+    <div className="flex flex-col gap-2">
+      {/* App language */}
+      <div className="flex items-center justify-between">
+        <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.language.app')}</span>
+        <select
+          value={appLanguage}
+          onChange={(e) => {
+            const value = e.target.value as 'en' | 'pt-BR'
+            window.clui.saveSettings({ appLanguage: value })
+            useSessionStore.setState({ appLanguage: value })
+          }}
+          className="text-[11px] rounded-lg px-2 py-1 outline-none"
+          style={{
+            background: colors.surfacePrimary,
+            color: colors.textSecondary,
+            border: `1px solid ${colors.containerBorder}`,
+            width: 140,
+          }}
+        >
+          {AVAILABLE_LANGUAGES.map((l) => (
+            <option key={l.id} value={l.id}>{l.label}</option>
+          ))}
+        </select>
       </div>
-      <select
-        value={lang}
-        onChange={(e) => {
-          setLang(e.target.value)
-          window.clui.saveSettings({ responseLanguage: e.target.value })
-        }}
-        className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none transition-colors"
-        style={{
-          background: colors.surfacePrimary,
-          color: colors.textSecondary,
-          border: `1px solid ${colors.containerBorder}`,
-        }}
-      >
-        {LANGUAGES.map((l) => (
-          <option key={l.value} value={l.value}>{l.label}</option>
-        ))}
-      </select>
+
+      {/* Response language */}
+      <div className="flex items-center justify-between">
+        <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.language.responses')}</span>
+        <select
+          value={responseLang}
+          onChange={(e) => {
+            setResponseLang(e.target.value)
+            window.clui.saveSettings({ responseLanguage: e.target.value })
+          }}
+          className="text-[11px] rounded-lg px-2 py-1 outline-none"
+          style={{
+            background: colors.surfacePrimary,
+            color: colors.textSecondary,
+            border: `1px solid ${colors.containerBorder}`,
+            width: 140,
+          }}
+        >
+          {LANGUAGES.map((l) => (
+            <option key={l.value} value={l.value}>{l.label}</option>
+          ))}
+        </select>
+      </div>
     </div>
   )
 }
@@ -343,7 +371,13 @@ const WHISPER_LANGUAGES = [
   { value: 'ko', label: 'Korean' },
 ] as const
 
-function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+function WhisperSection({ colors, micDeviceId, micDevices, setMicDeviceId }: {
+  colors: ReturnType<typeof useColors>
+  micDeviceId: string | null
+  micDevices: MediaDeviceInfo[]
+  setMicDeviceId: (id: string | null) => void
+}) {
+  const t = useT()
   const [model, setModel] = useState('tiny')
   const [language, setLanguage] = useState('auto')
   const [device, setDevice] = useState('auto')
@@ -363,6 +397,13 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
     refreshDownloaded()
     window.clui.detectGpu().then(setGpuInfo).catch(() => {})
   }, [refreshDownloaded])
+
+  const [cudaInstalled, setCudaInstalled] = useState(false)
+  const [cudaDownloading, setCudaDownloading] = useState(false)
+
+  useEffect(() => {
+    window.clui.checkCuda().then((r) => setCudaInstalled(r.installed)).catch(() => {})
+  }, [])
 
   const [downloading, setDownloading] = useState<string | null>(null)
 
@@ -393,7 +434,7 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
         {/* Model selector with download status */}
         <div>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px]" style={{ color: colors.textSecondary }}>Model</span>
+            <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.whisper.model')}</span>
           </div>
           <div className="flex flex-col gap-0.5">
             {WHISPER_MODELS.map((m) => {
@@ -437,7 +478,7 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
                       <span className="text-[9px]" style={{ color: colors.textTertiary }}>{m.size}</span>
                     </div>
                     <div className="text-[9px]" style={{ color: colors.textTertiary }}>
-                      {isDownloading ? 'Downloading...' : m.note}
+                      {isDownloading ? t('general.downloading') : m.note}
                     </div>
                   </div>
                   {/* Delete button for downloaded models */}
@@ -457,7 +498,7 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
           </div>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>Language</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.whisper.language')}</span>
           <select
             value={language}
             onChange={(e) => { setLanguage(e.target.value); window.clui.saveSettings({ whisperLanguage: e.target.value }) }}
@@ -470,18 +511,74 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
           </select>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>Device</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.whisper.device')}</span>
           <select
             value={device}
             onChange={(e) => { setDevice(e.target.value); window.clui.saveSettings({ whisperDevice: e.target.value }) }}
             className="text-[11px] rounded-lg px-2 py-1 outline-none"
             style={{ ...selectStyle, width: 140 }}
           >
-            <option value="auto">Auto (GPU if available)</option>
+            <option value="auto">{t('settings.whisper.device.auto')}</option>
             <option value="gpu" disabled={!gpuInfo.hasGpu}>
-              {gpuInfo.hasGpu ? `GPU (${gpuInfo.name})` : 'GPU (no NVIDIA detected)'}
+              {gpuInfo.hasGpu ? `${t('settings.whisper.device.gpu.detected')} (${gpuInfo.name})` : t('settings.whisper.device.gpu.none')}
             </option>
-            <option value="cpu">CPU</option>
+            <option value="cpu">{t('settings.whisper.device.cpu')}</option>
+          </select>
+        </div>
+        {/* GPU Acceleration (CUDA) download */}
+        {gpuInfo.hasGpu && (
+          <div className="flex items-center justify-between">
+            <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.whisper.gpu.title')}</span>
+            {cudaInstalled ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px]" style={{ color: colors.accent }}>{t('general.installed')}</span>
+                <button
+                  onClick={async () => {
+                    await window.clui.deleteCuda()
+                    setCudaInstalled(false)
+                  }}
+                  className="text-[10px] rounded-md px-1.5 py-0.5"
+                  style={{ color: colors.statusError, border: `1px solid ${colors.statusError}33` }}
+                >
+                  {t('general.remove')}
+                </button>
+              </div>
+            ) : (
+              <button
+                disabled={cudaDownloading}
+                onClick={async () => {
+                  setCudaDownloading(true)
+                  const result = await window.clui.downloadCuda()
+                  setCudaDownloading(false)
+                  if (result.ok) setCudaInstalled(true)
+                }}
+                className="text-[10px] rounded-md px-2 py-0.5 font-medium"
+                style={{
+                  color: cudaDownloading ? colors.textTertiary : '#fff',
+                  background: cudaDownloading ? colors.surfaceHover : colors.accent,
+                  border: 'none', cursor: cudaDownloading ? 'wait' : 'pointer',
+                }}
+              >
+                {cudaDownloading ? t('settings.whisper.gpu.downloading') : t('settings.whisper.gpu.download')}
+              </button>
+            )}
+          </div>
+        )}
+        {/* Microphone */}
+        <div className="flex items-center justify-between mt-1">
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.mic')}</span>
+          <select
+            value={micDeviceId || ''}
+            onChange={(e) => setMicDeviceId(e.target.value || null)}
+            className="text-[11px] rounded-lg px-2 py-1 outline-none"
+            style={{ ...selectStyle, width: 140 }}
+          >
+            <option value="">{t('settings.mic.default')}</option>
+            {micDevices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || `Mic ${d.deviceId.slice(0, 8)}`}
+              </option>
+            ))}
           </select>
         </div>
     </div>
@@ -491,6 +588,7 @@ function WhisperSection({ colors }: { colors: ReturnType<typeof useColors> }) {
 /* ─── Global Rules ─── */
 
 function GlobalRulesSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const t = useT()
   const [rules, setRules] = useState('')
   const [saved, setSaved] = useState(false)
 
@@ -515,7 +613,7 @@ function GlobalRulesSection({ colors }: { colors: ReturnType<typeof useColors> }
         value={rules}
         onChange={(e) => { setRules(e.target.value); setSaved(false) }}
         onBlur={handleSave}
-        placeholder="Global instructions applied to all Claude Code sessions..."
+        placeholder={t('settings.rules.placeholder')}
         rows={5}
         className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none resize-none"
         style={{
@@ -527,7 +625,7 @@ function GlobalRulesSection({ colors }: { colors: ReturnType<typeof useColors> }
       />
       {saved && (
         <div style={{ fontSize: 10, color: colors.accent, marginTop: 2 }}>
-          Saved to ~/.claude/CLAUDE.md
+          {t('general.saved')}
         </div>
       )}
     </div>
@@ -537,6 +635,7 @@ function GlobalRulesSection({ colors }: { colors: ReturnType<typeof useColors> }
 /* ─── About & Updates ─── */
 
 function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const t = useT()
   const [version, setVersion] = useState('')
   const [status, setStatus] = useState<UpdateStatus>({ state: 'idle' })
 
@@ -584,14 +683,14 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
       {status.state === 'checking' && (
         <div className="flex items-center gap-1.5">
           <CircleNotch size={12} className="animate-spin" style={{ color: colors.accent }} />
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>Checking for updates...</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.checking')}</span>
         </div>
       )}
 
       {status.state === 'up-to-date' && (
         <div className="flex items-center gap-1.5">
           <CheckCircle size={12} weight="fill" style={{ color: colors.accent }} />
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>Up to date</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.upToDate')}</span>
         </div>
       )}
 
@@ -603,7 +702,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             className="text-[11px] px-2 py-1 rounded-lg"
             style={{ background: colors.accent, color: '#fff', cursor: 'pointer' }}
           >
-            Download update
+            {t('settings.update.download')}
           </button>
         </div>
       )}
@@ -612,7 +711,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1.5">
             <CircleNotch size={12} className="animate-spin" style={{ color: colors.accent }} />
-            <span className="text-[11px]" style={{ color: colors.textSecondary }}>Downloading... {Math.round(status.percent)}%</span>
+            <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.downloading')} {Math.round(status.percent)}%</span>
           </div>
           <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: colors.surfaceSecondary }}>
             <div className="h-full rounded-full transition-all" style={{ width: `${status.percent}%`, background: colors.accent }} />
@@ -628,14 +727,14 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             className="text-[11px] px-2 py-1 rounded-lg"
             style={{ background: colors.accent, color: '#fff', cursor: 'pointer' }}
           >
-            Update &amp; Restart
+            {t('settings.update.install')}
           </button>
         </div>
       )}
 
       {status.state === 'error' && (
         <div className="flex flex-col gap-1">
-          <span className="text-[10px]" style={{ color: colors.statusError }}>Update error</span>
+          <span className="text-[10px]" style={{ color: colors.statusError }}>{t('settings.update.error')}</span>
           <button
             onClick={() => window.clui.checkForUpdate()}
             className="text-[10px] px-2 py-0.5 rounded"
@@ -652,7 +751,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
           className="text-[10px] self-start"
           style={{ color: colors.textTertiary, cursor: 'pointer', textDecoration: 'underline' }}
         >
-          Check for updates
+          {t('settings.update.check')}
         </button>
       )}
     </div>
@@ -675,8 +774,16 @@ export function SettingsPopover() {
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
+  const t = useT()
 
   const [open, setOpen] = useState(false)
+
+  // Listen for /config slash command
+  useEffect(() => {
+    const handler = () => setOpen(true)
+    window.addEventListener('clui:open-settings', handler)
+    return () => window.removeEventListener('clui:open-settings', handler)
+  }, [])
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([])
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
@@ -762,7 +869,7 @@ export function SettingsPopover() {
         onClick={handleToggle}
         className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-colors"
         style={{ color: colors.textTertiary }}
-        title="Settings"
+        title={t('settings.title')}
       >
         <DotsThree size={16} weight="bold" />
       </button>
@@ -803,7 +910,7 @@ export function SettingsPopover() {
                 <div className="flex items-center gap-2 min-w-0">
                   <ArrowsOutSimple size={14} style={{ color: colors.textTertiary }} />
                   <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-                    Full width
+                    {t('settings.appearance.expanded')}
                   </div>
                 </div>
                 <RowToggle
@@ -819,33 +926,13 @@ export function SettingsPopover() {
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            {/* Notification sound */}
-            <div>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Bell size={14} style={{ color: colors.textTertiary }} />
-                  <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-                    Notification sound
-                  </div>
-                </div>
-                <RowToggle
-                  checked={soundEnabled}
-                  onChange={setSoundEnabled}
-                  colors={colors}
-                  label="Toggle notification sound"
-                />
-              </div>
-            </div>
-
-            <div style={{ height: 1, background: colors.popoverBorder }} />
-
             {/* Theme */}
             <div>
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <Moon size={14} style={{ color: colors.textTertiary }} />
                   <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-                    Dark theme
+                    {t('settings.appearance.theme')}
                   </div>
                 </div>
                 <RowToggle
@@ -859,31 +946,22 @@ export function SettingsPopover() {
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            {/* Microphone device */}
+            {/* Notification sound */}
             <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <Microphone size={14} style={{ color: colors.textTertiary }} />
-                <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-                  Microphone device
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Bell size={14} style={{ color: colors.textTertiary }} />
+                  <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
+                    {t('settings.appearance.sound')}
+                  </div>
                 </div>
+                <RowToggle
+                  checked={soundEnabled}
+                  onChange={setSoundEnabled}
+                  colors={colors}
+                  label="Toggle notification sound"
+                />
               </div>
-              <select
-                value={micDeviceId || ''}
-                onChange={(e) => setMicDeviceId(e.target.value || null)}
-                className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none transition-colors"
-                style={{
-                  background: colors.surfacePrimary,
-                  color: colors.textSecondary,
-                  border: `1px solid ${colors.containerBorder}`,
-                }}
-              >
-                <option value="">System default</option>
-                {micDevices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || `Microphone ${d.deviceId.slice(0, 8)}`}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
@@ -894,7 +972,7 @@ export function SettingsPopover() {
                 <div className="flex items-center gap-2 min-w-0">
                   <MagnifyingGlassPlus size={14} style={{ color: colors.textTertiary }} />
                   <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-                    Zoom
+                    {t('settings.appearance.zoom')}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -947,36 +1025,37 @@ export function SettingsPopover() {
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            {/* Response language */}
-            <LanguageSection colors={colors} />
-
-            <div style={{ height: 1, background: colors.popoverBorder }} />
-
-            <CollapsibleSection colors={colors} icon={<Microphone size={14} style={{ color: colors.textTertiary }} />} label="Whisper">
-              <WhisperSection colors={colors} />
+            <CollapsibleSection colors={colors} icon={<Translate size={14} style={{ color: colors.textTertiary }} />} label={t('settings.language')}>
+              <LanguageSection colors={colors} />
             </CollapsibleSection>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            <CollapsibleSection colors={colors} icon={<Keyboard size={14} style={{ color: colors.textTertiary }} />} label="Shortcuts">
+            <CollapsibleSection colors={colors} icon={<Keyboard size={14} style={{ color: colors.textTertiary }} />} label={t('settings.shortcuts')}>
               <ShortcutsSection colors={colors} />
             </CollapsibleSection>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            <CollapsibleSection colors={colors} icon={<Power size={14} style={{ color: colors.textTertiary }} />} label="Startup">
+            <CollapsibleSection colors={colors} icon={<Microphone size={14} style={{ color: colors.textTertiary }} />} label={t('settings.whisper')}>
+              <WhisperSection colors={colors} micDeviceId={micDeviceId} micDevices={micDevices} setMicDeviceId={setMicDeviceId} />
+            </CollapsibleSection>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            <CollapsibleSection colors={colors} icon={<Power size={14} style={{ color: colors.textTertiary }} />} label={t('settings.startup')}>
               <StartupSection colors={colors} />
             </CollapsibleSection>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            <CollapsibleSection colors={colors} icon={<NotePencil size={14} style={{ color: colors.textTertiary }} />} label="Global Rules">
+            <CollapsibleSection colors={colors} icon={<NotePencil size={14} style={{ color: colors.textTertiary }} />} label={t('settings.rules')}>
               <GlobalRulesSection colors={colors} />
             </CollapsibleSection>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            <CollapsibleSection colors={colors} icon={<ArrowsClockwise size={14} style={{ color: colors.textTertiary }} />} label="About & Updates">
+            <CollapsibleSection colors={colors} icon={<ArrowsClockwise size={14} style={{ color: colors.textTertiary }} />} label={t('settings.about')}>
               <UpdateSection colors={colors} />
             </CollapsibleSection>
           </div>

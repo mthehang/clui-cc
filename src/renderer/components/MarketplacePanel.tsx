@@ -3,10 +3,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, MagnifyingGlass, SpinnerGap, ArrowClockwise, HeadCircuit, Compass, GithubLogo } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useColors } from '../theme'
+import { useT } from '../i18n'
 import type { CatalogPlugin, PluginStatus } from '../../shared/types'
 
 export function MarketplacePanel() {
   const colors = useColors()
+  const t = useT()
   const catalog = useSessionStore((s) => s.marketplaceCatalog)
   const loading = useSessionStore((s) => s.marketplaceLoading)
   const error = useSessionStore((s) => s.marketplaceError)
@@ -39,7 +41,7 @@ export function MarketplacePanel() {
 
   // Debounced search
   const [localSearch, setLocalSearch] = useState(search)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
     setLocalSearch(val)
@@ -124,7 +126,7 @@ export function MarketplacePanel() {
           <HeadCircuit size={20} weight="regular" style={{ color: colors.accent }} />
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: colors.textPrimary }}>
-              Skills Marketplace
+              {t('marketplace.title')}
             </div>
             <div style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
               Install skills and plugins without leaving CLUI
@@ -190,7 +192,7 @@ export function MarketplacePanel() {
             whiteSpace: 'nowrap',
           }}
         >
-          Installed
+          {t('marketplace.tab.installed')}
         </button>
         <div style={{
           display: 'flex',
@@ -206,7 +208,7 @@ export function MarketplacePanel() {
           <MagnifyingGlass size={13} style={{ color: colors.textTertiary, flexShrink: 0 }} />
           <input
             type="text"
-            placeholder="Search skills, tags, authors..."
+            placeholder={t('marketplace.search')}
             value={localSearch}
             onChange={handleSearchChange}
             style={{
@@ -321,6 +323,7 @@ function PluginCard({ plugin, status, colors, expanded, onToggleExpand, scrollCo
   onToggleExpand: () => void
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
 }) {
+  const t = useT()
   const [showConfirm, setShowConfirm] = useState(false)
   const installPlugin = useSessionStore((s) => s.installMarketplacePlugin)
   const uninstallPlugin = useSessionStore((s) => s.uninstallMarketplacePlugin)
@@ -523,7 +526,7 @@ function PluginCard({ plugin, status, colors, expanded, onToggleExpand, scrollCo
               >
                 <SpinnerGap size={14} style={{ color: colors.accent }} />
               </motion.div>
-              <span style={{ fontSize: 11, color: colors.textSecondary }}>Installing plugin...</span>
+              <span style={{ fontSize: 11, color: colors.textSecondary }}>{t('marketplace.installing')}</span>
             </div>
           )}
         </div>
@@ -574,6 +577,7 @@ function StatusButton({ status, colors, onClick, onUninstall }: {
   onClick: (e: React.MouseEvent) => void
   onUninstall?: (e: React.MouseEvent) => void
 }) {
+  const t = useT()
   const [hovered, setHovered] = useState(false)
   switch (status) {
     case 'installed':
@@ -591,7 +595,7 @@ function StatusButton({ status, colors, onClick, onUninstall }: {
             transition: 'all 0.15s',
           }}
         >
-          {hovered ? 'Uninstall' : 'Installed'}
+          {hovered ? t('general.remove') : t('general.installed')}
         </button>
       )
     case 'installing':
@@ -609,7 +613,7 @@ function StatusButton({ status, colors, onClick, onUninstall }: {
           >
             <SpinnerGap size={10} />
           </motion.div>
-          Installing...
+          {t('marketplace.installing')}
         </span>
       )
     case 'failed':
@@ -623,7 +627,7 @@ function StatusButton({ status, colors, onClick, onUninstall }: {
             whiteSpace: 'nowrap',
           }}
         >
-          Failed — Retry
+          {t('marketplace.failed')} — Retry
         </button>
       )
     default:
@@ -641,7 +645,7 @@ function StatusButton({ status, colors, onClick, onUninstall }: {
           onMouseEnter={(e) => (e.currentTarget.style.background = colors.accentSoft)}
           onMouseLeave={(e) => (e.currentTarget.style.background = colors.accentLight)}
         >
-          Install
+          {t('general.install')}
         </button>
       )
   }
@@ -728,6 +732,7 @@ function ErrorState({ error, colors, onRetry }: {
 }
 
 function EmptyState({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const t = useT()
   return (
     <div style={{
       padding: '24px 10px', textAlign: 'center',

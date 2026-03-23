@@ -45,18 +45,19 @@ const DEFAULT_SETTINGS: AppSettings = {
   zoomLevel: 1.0,
   autoStart: false,
   startHidden: false,
-  permissionMode: 'ask',
+  permissionMode: 'auto',
   effortLevel: null,
   planMode: false,
   secondaryShortcut: null,
   transcriptionShortcut: null,
   thinkingEnabled: true,
-  remoteEnabled: false,
+
   responseLanguage: 'auto',
   globalRules: '',
   whisperModel: 'tiny',
   whisperLanguage: 'auto',
   whisperDevice: 'auto',
+  appLanguage: 'en',
 }
 
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
@@ -182,7 +183,15 @@ function createWindow(): void {
   mainWindow.setAlwaysOnTop(true, IS_MAC ? 'screen-saver' : 'pop-up-menu')
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
+    // On Windows, openAsHidden adds --hidden to auto-start args.
+    // On macOS, check wasOpenedAsHidden from login item settings.
+    const wasOpenedHidden = process.argv.includes('--hidden') ||
+      (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden)
+
+    if (!wasOpenedHidden) {
+      mainWindow?.show()
+    }
+
     // Enable OS-level click-through for transparent regions.
     // { forward: true } ensures mousemove events still reach the renderer
     // so it can toggle click-through off when cursor enters interactive UI.
@@ -387,6 +396,9 @@ ipcMain.handle(IPC.TAB_HEALTH, () => {
 
 ipcMain.handle(IPC.CLOSE_TAB, (_event, tabId: string) => {
   log(`IPC CLOSE_TAB: ${tabId}`)
+  // Kill RC daemon if active for this tab
+  const rcDaemon = rcDaemons.get(tabId)
+  if (rcDaemon) { rcDaemon.stop(); rcDaemons.delete(tabId) }
   controlPlane.closeTab(tabId)
 })
 
@@ -769,7 +781,7 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
           try {
             const obj = JSON.parse(line)
             // Validate: must have expected Claude transcript fields
-            if (!meta.validated && obj.type && obj.uuid && obj.timestamp) {
+            if (!meta.validated && obj.type && obj.timestamp) {
               meta.validated = true
             }
             if (obj.slug && !meta.slug) meta.slug = obj.slug
@@ -885,6 +897,23 @@ ipcMain.handle(IPC.LIST_LOCAL_SKILLS, async () => {
   try {
     return await scanLocalSkills()
   } catch { return [] }
+})
+
+ipcMain.handle(IPC.RUN_CLI_LOGIN, async () => {
+  const claudePath = findBinaryInPath('claude') || 'claude'
+  try {
+    const { spawn } = require('child_process')
+    // claude login opens a browser for OAuth — run detached so it doesn't block
+    const child = spawn(claudePath, ['login'], {
+      detached: true,
+      stdio: 'ignore',
+      env: getCliEnv(),
+    })
+    child.unref()
+    return { ok: true }
+  } catch (err: any) {
+    return { ok: false, error: err.message }
+  }
 })
 
 ipcMain.handle(IPC.SELECT_DIRECTORY, async () => {
@@ -1479,6 +1508,157 @@ ipcMain.handle(IPC.DETECT_GPU, async () => {
   } catch {
     return { hasGpu: false, name: '' }
   }
+})
+
+// ─── CUDA DLL management (on-demand GPU acceleration) ───
+
+const CUDA_DLLS = ['cublas64_12.dll', 'cublasLt64_12.dll', 'cudart64_12.dll', 'ggml-cuda.dll', 'nvrtc64_120_0.dll', 'nvrtc-builtins64_124.dll']
+
+ipcMain.handle(IPC.CHECK_CUDA, () => {
+  const whisperDir = getWhisperDir()
+  const installed = CUDA_DLLS.every((dll) => existsSync(join(whisperDir, dll)))
+  return { installed }
+})
+
+ipcMain.handle(IPC.DOWNLOAD_CUDA, async () => {
+  if (!IS_WIN) return { ok: false, error: 'CUDA acceleration is only available on Windows' }
+  const whisperDir = getWhisperDir()
+  const { mkdirSync, unlinkSync, renameSync, rmSync } = require('fs')
+  const { execFileSync } = require('child_process')
+
+  try {
+    mkdirSync(whisperDir, { recursive: true })
+
+    // Check if already installed
+    if (CUDA_DLLS.every((dll) => existsSync(join(whisperDir, dll)))) {
+      return { ok: true }
+    }
+
+    log('Downloading CUDA libraries for GPU acceleration...')
+
+    // Fetch latest whisper.cpp release — find cuBLAS zip
+    const releaseJson = execFileSync('curl', ['-sL', '-H', 'User-Agent: clui-cc', 'https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest'], { encoding: 'utf-8', timeout: 30000 })
+    const release = JSON.parse(releaseJson)
+
+    const asset = release.assets.find((a: any) => {
+      const n = a.name.toLowerCase()
+      return n.includes('x64') && n.endsWith('.zip') && n.includes('cublas-12')
+    }) || release.assets.find((a: any) => {
+      const n = a.name.toLowerCase()
+      return n.includes('x64') && n.endsWith('.zip') && n.includes('cublas')
+    })
+
+    if (!asset) return { ok: false, error: 'Could not find CUDA build in latest whisper.cpp release' }
+
+    const zipPath = join(whisperDir, 'cuda-libs.zip')
+    const extractDir = join(whisperDir, '_cuda_extract')
+
+    log(`Downloading CUDA zip: ${asset.name}`)
+    execFileSync('curl', ['-L', '--fail', '-o', zipPath, asset.browser_download_url], { stdio: 'ignore', timeout: 600000 })
+
+    // Extract only DLLs
+    if (existsSync(extractDir)) rmSync(extractDir, { recursive: true, force: true })
+    mkdirSync(extractDir, { recursive: true })
+
+    execFileSync('powershell', [
+      '-NoProfile', '-Command',
+      `Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force`
+    ], { stdio: 'ignore', timeout: 120000 })
+
+    // Find and copy CUDA DLLs + whisper binary
+    const allFiles = listFilesRecursive(extractDir)
+    let copiedCount = 0
+    for (const f of allFiles) {
+      const base = require('path').basename(f)
+      if (base.endsWith('.dll') || base.endsWith('.exe')) {
+        const dest = join(whisperDir, base)
+        require('fs').copyFileSync(f, dest)
+        copiedCount++
+        log(`CUDA: copied ${base}`)
+      }
+    }
+
+    // Cleanup
+    try { unlinkSync(zipPath) } catch {}
+    try { rmSync(extractDir, { recursive: true, force: true }) } catch {}
+
+    // Clean nested dirs left over
+    for (const entry of readdirSync(whisperDir)) {
+      const full = join(whisperDir, entry)
+      if (statSync(full).isDirectory()) rmSync(full, { recursive: true, force: true })
+    }
+
+    log(`CUDA download complete: ${copiedCount} files`)
+    return { ok: true }
+  } catch (err: any) {
+    log(`CUDA download failed: ${err.message}`)
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle(IPC.DELETE_CUDA, () => {
+  const whisperDir = getWhisperDir()
+  let deleted = 0
+  for (const dll of CUDA_DLLS) {
+    const p = join(whisperDir, dll)
+    if (existsSync(p)) {
+      try { require('fs').unlinkSync(p); deleted++ } catch {}
+    }
+  }
+  return { ok: true, deleted }
+})
+
+// Helper reused by CUDA download
+function listFilesRecursive(dir: string): string[] {
+  const results: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) results.push(...listFilesRecursive(full))
+    else results.push(full)
+  }
+  return results
+}
+
+// ─── Remote Control daemon ───
+import { RcDaemon } from './claude/rc-daemon'
+const rcDaemons = new Map<string, RcDaemon>()
+
+ipcMain.handle(IPC.RC_START, (_event, { tabId, sessionId, projectPath }: { tabId: string; sessionId: string; projectPath: string }) => {
+  try {
+    if (rcDaemons.has(tabId)) return { ok: true, url: rcDaemons.get(tabId)!.getUrl() }
+
+    const daemon = new RcDaemon()
+    rcDaemons.set(tabId, daemon)
+
+    daemon.on('url', (url: string) => {
+      mainWindow?.webContents.send(IPC.RC_URL, tabId, url)
+    })
+    daemon.on('stopped', () => {
+      rcDaemons.delete(tabId)
+      mainWindow?.webContents.send(IPC.RC_STOPPED, tabId)
+    })
+    daemon.on('error', (msg: string) => {
+      log(`[RC] Daemon error for tab ${tabId}: ${msg}`)
+      rcDaemons.delete(tabId)
+      mainWindow?.webContents.send(IPC.RC_STOPPED, tabId)
+    })
+
+    daemon.start(sessionId, projectPath)
+    return { ok: true }
+  } catch (err: any) {
+    log(`[RC] RC_START failed for tab ${tabId}: ${err.message}`)
+    rcDaemons.delete(tabId)
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle(IPC.RC_STOP, (_event, tabId: string) => {
+  const daemon = rcDaemons.get(tabId)
+  if (daemon) {
+    daemon.stop()
+    rcDaemons.delete(tabId)
+  }
+  return { ok: true }
 })
 
 ipcMain.handle(IPC.GET_DIAGNOSTICS, () => {

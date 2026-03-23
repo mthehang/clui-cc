@@ -3,23 +3,37 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import {
   Trash, Cpu, CurrencyDollar, Question, HardDrives, Sparkle,
+  GearSix, ArrowsInSimple, Notepad, Info, ShieldCheck, FilePlus,
+  SignIn, SignOut, Stethoscope, Bug,
 } from '@phosphor-icons/react'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
+import { useT } from '../i18n'
 
 export interface SlashCommand {
   command: string
   description: string
+  i18nKey?: string
   icon: React.ReactNode
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { command: '/clear', description: 'Clear conversation history', icon: <Trash size={13} /> },
-  { command: '/cost', description: 'Show token usage and cost', icon: <CurrencyDollar size={13} /> },
-  { command: '/model', description: 'Show current model info', icon: <Cpu size={13} /> },
-  { command: '/mcp', description: 'Show MCP server status', icon: <HardDrives size={13} /> },
-  { command: '/skills', description: 'Show available skills', icon: <Sparkle size={13} /> },
-  { command: '/help', description: 'Show available commands', icon: <Question size={13} /> },
+  { command: '/clear', description: 'Clear conversation history', i18nKey: 'cmd.clear', icon: <Trash size={13} /> },
+  { command: '/cost', description: 'Show token usage and cost', i18nKey: 'cmd.cost', icon: <CurrencyDollar size={13} /> },
+  { command: '/model', description: 'Show current model info', i18nKey: 'cmd.model', icon: <Cpu size={13} /> },
+  { command: '/mcp', description: 'Show MCP server status', i18nKey: 'cmd.mcp', icon: <HardDrives size={13} /> },
+  { command: '/skills', description: 'Show available skills', i18nKey: 'cmd.skills', icon: <Sparkle size={13} /> },
+  { command: '/help', description: 'Show available commands', i18nKey: 'cmd.help', icon: <Question size={13} /> },
+  { command: '/config', description: 'Open settings', i18nKey: 'cmd.config', icon: <GearSix size={13} /> },
+  { command: '/compact', description: 'Compact conversation context', i18nKey: 'cmd.compact', icon: <ArrowsInSimple size={13} /> },
+  { command: '/memory', description: 'Edit CLAUDE.md rules', i18nKey: 'cmd.memory', icon: <Notepad size={13} /> },
+  { command: '/status', description: 'Show session status', i18nKey: 'cmd.status', icon: <Info size={13} /> },
+  { command: '/permissions', description: 'Change permission mode', i18nKey: 'cmd.permissions', icon: <ShieldCheck size={13} /> },
+  { command: '/init', description: 'Generate CLAUDE.md for project', i18nKey: 'cmd.init', icon: <FilePlus size={13} /> },
+  { command: '/login', description: 'Authenticate with Anthropic', i18nKey: 'cmd.login', icon: <SignIn size={13} /> },
+  { command: '/logout', description: 'Sign out', i18nKey: 'cmd.logout', icon: <SignOut size={13} /> },
+  { command: '/doctor', description: 'Run diagnostics', i18nKey: 'cmd.doctor', icon: <Stethoscope size={13} /> },
+  { command: '/bug', description: 'Report a bug', i18nKey: 'cmd.bug', icon: <Bug size={13} /> },
 ]
 
 interface Props {
@@ -50,6 +64,7 @@ export function SlashCommandMenu({ filter, selectedIndex, onSelect, anchorRect, 
   const popoverLayer = usePopoverLayer()
   const filtered = getFilteredCommandsWithExtras(filter, extraCommands)
   const colors = useColors()
+  const t = useT()
 
   useEffect(() => {
     if (!listRef.current) return
@@ -124,7 +139,7 @@ export function SlashCommandMenu({ filter, selectedIndex, onSelect, anchorRect, 
                   className="text-[11px] ml-2"
                   style={{ color: colors.textTertiary }}
                 >
-                  {cmd.description}
+                  {cmd.i18nKey ? t(cmd.i18nKey) : cmd.description}
                 </span>
               </div>
             </button>

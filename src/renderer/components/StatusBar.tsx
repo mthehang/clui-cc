@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck, Keyboard, Gauge, Warning, ListChecks, Question } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck, Keyboard, Gauge, Warning, ListChecks, Question, PencilSimple, Lightning } from '@phosphor-icons/react'
 import type { IconWeight } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors, useThemeStore } from '../theme'
+import { useT } from '../i18n'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
@@ -131,6 +132,7 @@ function ModelPicker() {
 /* ─── Permission Mode Picker (global — affects all tabs) ─── */
 
 function PermissionModePicker() {
+  const t = useT()
   const permissionMode = useSessionStore((s) => s.permissionMode)
   const setPermissionMode = useSessionStore((s) => s.setPermissionMode)
   const popoverLayer = usePopoverLayer()
@@ -170,17 +172,22 @@ function PermissionModePicker() {
   const isBypass = permissionMode === 'bypass'
   const isAuto = permissionMode === 'auto'
   const isPlan = permissionMode === 'plan'
-  const modeLabel = isPlan ? 'Plan' : isBypass ? 'Bypass' : isAuto ? 'Auto' : 'Ask'
+  const isAcceptEdits = permissionMode === 'acceptEdits'
+  const isDontAsk = permissionMode === 'dontAsk'
 
-  const triggerIcon = isPlan
-    ? <ListChecks size={11} weight="bold" />
-    : isBypass
-      ? <Warning size={11} weight="fill" />
-      : isAuto
-        ? <ShieldCheck size={11} weight="fill" />
-        : <Question size={11} weight="bold" />
+  const modeLabelMap: Record<string, string> = {
+    plan: t('mode.plan'), ask: t('mode.ask'), acceptEdits: t('mode.acceptEdits'), auto: t('mode.auto'), dontAsk: t('mode.dontAsk'), bypass: t('mode.bypass'),
+  }
+  const modeLabel = modeLabelMap[permissionMode] || 'Ask'
 
-  const triggerColor = isPlan ? '#60a5fa' : isBypass ? '#e57c23' : colors.textTertiary
+  const triggerIcon = isPlan ? <ListChecks size={11} weight="bold" />
+    : isAcceptEdits ? <PencilSimple size={11} weight="bold" />
+    : isAuto ? <ShieldCheck size={11} weight="fill" />
+    : isDontAsk ? <Lightning size={11} weight="fill" />
+    : isBypass ? <Warning size={11} weight="fill" />
+    : <Question size={11} weight="bold" />
+
+  const triggerColor = isPlan ? '#60a5fa' : (isBypass || isDontAsk) ? '#e57c23' : colors.textTertiary
 
   return (
     <>
@@ -228,7 +235,7 @@ function PermissionModePicker() {
             >
               <span className="flex items-center gap-1.5">
                 <ListChecks size={12} weight="bold" style={{ color: '#60a5fa' }} />
-                Plan
+                {t('mode.plan')}
               </span>
               {isPlan && <Check size={12} style={{ color: '#60a5fa' }} />}
             </button>
@@ -245,9 +252,26 @@ function PermissionModePicker() {
             >
               <span className="flex items-center gap-1.5">
                 <Question size={12} weight="bold" />
-                Ask
+                {t('mode.ask')}
               </span>
               {permissionMode === 'ask' && <Check size={12} style={{ color: colors.accent }} />}
+            </button>
+
+            <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
+
+            <button
+              onClick={() => { setPermissionMode('acceptEdits'); setOpen(false) }}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
+              style={{
+                color: isAcceptEdits ? colors.textPrimary : colors.textSecondary,
+                fontWeight: isAcceptEdits ? 600 : 400,
+              }}
+            >
+              <span className="flex items-center gap-1.5">
+                <PencilSimple size={12} weight="bold" />
+                {t('mode.acceptEdits')}
+              </span>
+              {isAcceptEdits && <Check size={12} style={{ color: colors.accent }} />}
             </button>
 
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
@@ -262,9 +286,26 @@ function PermissionModePicker() {
             >
               <span className="flex items-center gap-1.5">
                 <ShieldCheck size={12} weight="fill" />
-                Auto
+                {t('mode.auto')}
               </span>
               {isAuto && <Check size={12} style={{ color: colors.accent }} />}
+            </button>
+
+            <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
+
+            <button
+              onClick={() => { setPermissionMode('dontAsk'); setOpen(false) }}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
+              style={{
+                color: isDontAsk ? '#e57c23' : colors.textSecondary,
+                fontWeight: isDontAsk ? 600 : 400,
+              }}
+            >
+              <span className="flex items-center gap-1.5">
+                <Lightning size={12} weight="fill" style={{ color: isDontAsk ? '#e57c23' : undefined }} />
+                {t('mode.dontAsk')}
+              </span>
+              {isDontAsk && <Check size={12} style={{ color: '#e57c23' }} />}
             </button>
 
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
@@ -279,7 +320,7 @@ function PermissionModePicker() {
             >
               <span className="flex items-center gap-1.5">
                 <Warning size={12} weight="fill" style={{ color: '#e57c23' }} />
-                Bypass
+                {t('mode.bypass')}
               </span>
               {isBypass && <Check size={12} style={{ color: '#e57c23' }} />}
             </button>
@@ -428,6 +469,7 @@ function formatTokenCount(n: number): string {
 }
 
 export function StatusBar() {
+  const t = useT()
   const tab = useSessionStore(
     (s) => s.tabs.find((t) => t.id === s.activeTabId),
     (a, b) => a === b || (!!a && !!b
@@ -496,7 +538,7 @@ export function StatusBar() {
 
   const dirTooltip = tab.hasChosenDirectory
     ? [tab.workingDirectory, ...tab.additionalDirs].join('\n')
-    : 'Using home directory by default — click to choose a folder'
+    : t('status.dir.choose')
 
   return (
     <div
@@ -594,7 +636,7 @@ export function StatusBar() {
                 style={{ color: colors.accent }}
               >
                 <Plus size={10} />
-                Add directory...
+                {t('status.dir.add')}
               </button>
             </div>
           </motion.div>,
@@ -612,8 +654,31 @@ export function StatusBar() {
         <EffortPicker />
       </div>
 
-      {/* Right — tokens + shortcut + CLI */}
+      {/* Right — context % + tokens + shortcut + CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
+        {tab.lastResult?.usage?.input_tokens && tab.lastResult.usage.input_tokens > 0 && (() => {
+          const contextLimit = 200_000
+          const pct = Math.min(100, Math.round((tab.lastResult!.usage.input_tokens! / contextLimit) * 100))
+          const color = pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : colors.textTertiary
+          return (
+            <span
+              className="text-[10px] tabular-nums flex items-center gap-1"
+              style={{ color, opacity: pct >= 60 ? 1 : 0.7 }}
+              title={`${t('status.context')}: ${formatTokenCount(tab.lastResult!.usage.input_tokens!)} / ${formatTokenCount(contextLimit)} tokens (${pct}%)`}
+            >
+              <span style={{
+                display: 'inline-block', width: 24, height: 4, borderRadius: 2,
+                background: `${color}22`, overflow: 'hidden', position: 'relative',
+              }}>
+                <span style={{
+                  position: 'absolute', left: 0, top: 0, height: '100%',
+                  width: `${pct}%`, borderRadius: 2, background: color,
+                }} />
+              </span>
+              {pct}%
+            </span>
+          )
+        })()}
         {tab.cumulativeUsage.runCount > 0 && (
           <span
             className="text-[10px] tabular-nums"
@@ -638,9 +703,9 @@ export function StatusBar() {
           onClick={handleOpenInTerminal}
           className="flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"
           style={{ color: colors.textTertiary }}
-          title="Open this session in Terminal"
+          title={t('status.terminal.title')}
         >
-          {!compact && 'Open in CLI'}
+          {!compact && t('status.terminal')}
           <Terminal size={11} />
         </button>
       </div>

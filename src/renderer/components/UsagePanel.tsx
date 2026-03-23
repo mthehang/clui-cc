@@ -2,6 +2,7 @@ import React, { useEffect } from 'react'
 import { X, ChartBar, ArrowClockwise, CurrencyDollar, Clock, Lightning } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useColors } from '../theme'
+import { useT } from '../i18n'
 
 function fmt(n: number, decimals = 2): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -98,6 +99,7 @@ function UsageBar({
 
 export function UsagePanel() {
   const colors = useColors()
+  const t = useT()
   const tabs = useSessionStore((s) => s.tabs)
   const closeUsagePanel = useSessionStore((s) => s.closeUsagePanel)
   const cloudUsage = useSessionStore((s) => s.cloudUsage)
@@ -141,7 +143,7 @@ export function UsagePanel() {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <ChartBar size={16} weight="bold" style={{ color: accentColor }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: colors.textPrimary }}>Session Usage</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: colors.textPrimary }}>{t('usage.session')}</span>
           {cloudUsage?.subscriptionType && (
             <span
               style={{
@@ -185,7 +187,7 @@ export function UsagePanel() {
         {hasBars && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
-              Limites de uso do plano
+              {t('usage.title')}
             </div>
             {cloudUsage!.bars.map((bar, i) => (
               <UsageBar
@@ -225,7 +227,7 @@ export function UsagePanel() {
         {/* Local session usage — compact row */}
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-            Uso local da sessao
+            {t('usage.cumulative')}
           </div>
           {totals.runs > 0 ? (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -244,7 +246,7 @@ export function UsagePanel() {
             </div>
           ) : (
             <div style={{ fontSize: 12, color: colors.textTertiary }}>
-              Nenhum uso ainda. Envie um prompt para comecar.
+              {t('history.empty')}
             </div>
           )}
         </div>
@@ -290,7 +292,7 @@ export function UsagePanel() {
                 animation: cloudUsageLoading ? 'spin 1s linear infinite' : 'none',
               }}
             />
-            {cloudUsageLoading ? 'Atualizando...' : 'Atualizar'}
+            {cloudUsageLoading ? t('settings.update.checking') : t('settings.update.check')}
           </button>
         </div>
       </div>

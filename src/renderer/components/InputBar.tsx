@@ -5,6 +5,7 @@ import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
 import { useColors, useThemeStore } from '../theme'
+import { useT } from '../i18n'
 
 const INPUT_MIN_HEIGHT = 20
 const INPUT_MAX_HEIGHT = 140
@@ -49,6 +50,7 @@ export function InputBar() {
   const activeTabId = useSessionStore((s) => s.activeTabId)
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const colors = useColors()
+  const t = useT()
   const micDeviceId = useThemeStore((s) => s.micDeviceId)
   const isBusy = tab?.status === 'running' || tab?.status === 'connecting'
   const isConnecting = tab?.status === 'connecting'
@@ -177,7 +179,7 @@ export function InputBar() {
   }, [])
 
   // ─── Handle slash commands ───
-  const executeCommand = useCallback((cmd: SlashCommand) => {
+  const executeCommand = useCallback(async (cmd: SlashCommand) => {
     switch (cmd.command) {
       case '/clear':
         clearTab()
@@ -235,18 +237,79 @@ export function InputBar() {
       }
       case '/help': {
         const lines = [
-          '/clear — Clear conversation history',
-          '/cost — Show token usage and cost',
-          '/model — Show model info & switch models',
-          '/mcp — Show MCP server status',
-          '/skills — Show available skills',
-          '/help — Show this list',
+          `/clear — ${t('cmd.clear')}`,
+          `/cost — ${t('cmd.cost')}`,
+          `/model — ${t('cmd.model')}`,
+          `/mcp — ${t('cmd.mcp')}`,
+          `/skills — ${t('cmd.skills')}`,
+          `/config — ${t('cmd.config')}`,
+          `/compact — ${t('cmd.compact')}`,
+          `/memory — ${t('cmd.memory')}`,
+          `/status — ${t('cmd.status')}`,
+          `/permissions — ${t('cmd.permissions')}`,
+          `/init — ${t('cmd.init')}`,
+          `/login — ${t('cmd.login')}`,
+          `/logout — ${t('cmd.logout')}`,
+          `/doctor — ${t('cmd.doctor')}`,
+          `/bug — ${t('cmd.bug')}`,
+          `/help — ${t('cmd.help')}`,
         ]
         addSystemMessage(lines.join('\n'))
         break
       }
+      case '/config':
+        window.dispatchEvent(new CustomEvent('clui:open-settings'))
+        break
+      case '/compact':
+        sendMessage('/compact — summarize and compact this conversation to free up context')
+        break
+      case '/memory': {
+        const rules = await window.clui.readGlobalRules()
+        addSystemMessage(`CLAUDE.md contents:\n\n${rules || '(empty — use /init to generate one)'}`)
+        break
+      }
+      case '/status': {
+        const lines = [
+          `Model: ${tab?.sessionModel || 'unknown'}`,
+          `Version: ${tab?.sessionVersion || staticInfo?.version || 'unknown'}`,
+          `Session: ${tab?.claudeSessionId || 'none'}`,
+          `Tools: ${tab?.sessionTools?.length || 0}`,
+          `MCP: ${tab?.sessionMcpServers?.map((s) => s.name).join(', ') || 'none'}`,
+          `Skills: ${tab?.sessionSkills?.length || 0}`,
+          `Permission: ${useSessionStore.getState().permissionMode}`,
+          `Directory: ${tab?.workingDirectory || 'unknown'}`,
+        ]
+        addSystemMessage(lines.join('\n'))
+        break
+      }
+      case '/permissions': {
+        const MODES: Array<'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass'> = ['plan', 'ask', 'acceptEdits', 'auto', 'dontAsk', 'bypass']
+        const cur = useSessionStore.getState().permissionMode
+        const idx = MODES.indexOf(cur)
+        const next = MODES[(idx + 1) % MODES.length]
+        useSessionStore.getState().setPermissionMode(next)
+        addSystemMessage(`Permission mode: ${cur} → ${next}`)
+        break
+      }
+      case '/init':
+        sendMessage('Generate a CLAUDE.md file for this project based on the codebase conventions, structure, and tech stack.')
+        break
+      case '/login':
+        window.clui.openExternal('https://console.anthropic.com/')
+        break
+      case '/logout':
+        addSystemMessage('To sign out, close the app and run `claude logout` in your terminal.')
+        break
+      case '/doctor': {
+        const diag = await window.clui.getDiagnostics()
+        addSystemMessage(`Diagnostics:\n${JSON.stringify(diag, null, 2)}`)
+        break
+      }
+      case '/bug':
+        window.clui.openExternal('https://github.com/anthropics/claude-code/issues')
+        break
     }
-  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel])
+  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel, sendMessage])
 
   const handleSlashSelect = useCallback((cmd: SlashCommand) => {
     const cmdName = cmd.command.replace(/^\//, '')
@@ -503,12 +566,12 @@ export function InputBar() {
                 onPaste={handlePaste}
                 placeholder={
                   isConnecting
-                    ? 'Initializing...'
+                    ? t('input.placeholder.connecting')
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
                       : isBusy
-                        ? 'Type to queue a message...'
-                        : 'Ask Claude Code anything...'
+                        ? t('input.placeholder.busy')
+                        : t('input.placeholder')
                 }
                 rows={1}
                 className="w-full bg-transparent resize-none"
@@ -542,7 +605,7 @@ export function InputBar() {
                       onClick={handleSend}
                       className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
                       style={{ background: colors.sendBg, color: colors.textOnAccent }}
-                      title={isBusy ? 'Queue message' : 'Send (Enter)'}
+                      title={isBusy ? t('input.send') : `${t('input.send')} (Enter)`}
                     >
                       <ArrowUp size={16} weight="bold" />
                     </button>
@@ -566,12 +629,12 @@ export function InputBar() {
                 onPaste={handlePaste}
                 placeholder={
                   isConnecting
-                    ? 'Initializing...'
+                    ? t('input.placeholder.connecting')
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
                       : isBusy
-                        ? 'Type to queue a message...'
-                        : 'Ask Claude Code anything...'
+                        ? t('input.placeholder.busy')
+                        : t('input.placeholder')
                 }
                 rows={1}
                 className="flex-1 bg-transparent resize-none"
@@ -605,7 +668,7 @@ export function InputBar() {
                       onClick={handleSend}
                       className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
                       style={{ background: colors.sendBg, color: colors.textOnAccent }}
-                      title={isBusy ? 'Queue message' : 'Send (Enter)'}
+                      title={isBusy ? t('input.send') : `${t('input.send')} (Enter)`}
                     >
                       <ArrowUp size={16} weight="bold" />
                     </button>
@@ -883,6 +946,7 @@ function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, on
   onStop: () => void
   audioLevel: number
 }) {
+  const t = useT()
   // Clamp and scale audio level for visual feedback
   const level = Math.min(1, audioLevel * 4)
 
@@ -902,7 +966,7 @@ function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, on
             onClick={onCancel}
             className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
             style={{ background: colors.surfaceHover, color: colors.textTertiary }}
-            title="Cancel recording"
+            title={t('input.stop')}
           >
             <X size={15} weight="bold" />
           </button>
@@ -932,7 +996,7 @@ function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, on
               onClick={onStop}
               className="w-9 h-9 rounded-full flex items-center justify-center relative z-10"
               style={{ background: colors.accent, color: colors.textOnAccent }}
-              title="Stop recording"
+              title={t('input.voice.stop')}
             >
               <Microphone size={16} weight="fill" />
             </button>
@@ -959,7 +1023,7 @@ function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, on
               background: colors.micBg,
               color: isConnecting ? colors.micDisabled : colors.micColor,
             }}
-            title="Voice input"
+            title={t('input.voice.start')}
           >
             <Microphone size={16} />
           </button>

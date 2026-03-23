@@ -172,8 +172,6 @@ export interface TabState {
   hasChosenDirectory: boolean
   /** Extra directories accessible via --add-dir (session-preserving) */
   additionalDirs: string[]
-  /** Remote Control enabled for this tab's session */
-  remoteEnabled: boolean
 }
 
 export interface Message {
@@ -236,8 +234,6 @@ export interface RunOptions {
   addDirs?: string[]
   permissionMode?: string
   thinkingBudget?: number
-  /** Enable Remote Control (--rc) for session sharing across devices */
-  remoteEnabled?: boolean
 }
 
 // ─── Control Plane Types ───
@@ -318,18 +314,18 @@ export interface AppSettings {
   zoomLevel: number
   autoStart: boolean
   startHidden: boolean
-  permissionMode: 'ask' | 'auto' | 'bypass' | 'plan'
+  permissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass'
   effortLevel: number | null
   planMode: boolean  // legacy — derived from permissionMode === 'plan'
   secondaryShortcut: string | null
   transcriptionShortcut: string | null
   thinkingEnabled: boolean
-  remoteEnabled: boolean
   responseLanguage: string
   globalRules: string
   whisperModel: string
   whisperLanguage: string
   whisperDevice: string
+  appLanguage: string
 }
 
 // ─── Cloud Usage Types (claude.ai-style bars) ───
@@ -378,6 +374,7 @@ export const IPC = {
   LIST_SESSIONS: 'clui:list-sessions',
   LOAD_SESSION: 'clui:load-session',
   LIST_LOCAL_SKILLS: 'clui:list-local-skills',
+  RUN_CLI_LOGIN: 'clui:run-cli-login',
 
   // One-way events (main → renderer)
   TEXT_CHUNK: 'clui:text-chunk',
@@ -443,8 +440,17 @@ export const IPC = {
   // Cloud usage
   FETCH_USAGE: 'clui:fetch-usage',
 
-  // GPU detection
+  // GPU detection & CUDA
   DETECT_GPU: 'clui:detect-gpu',
+  DOWNLOAD_CUDA: 'clui:download-cuda',
+  DELETE_CUDA: 'clui:delete-cuda',
+  CHECK_CUDA: 'clui:check-cuda',
+
+  // Remote Control daemon
+  RC_START: 'clui:rc-start',
+  RC_STOP: 'clui:rc-stop',
+  RC_URL: 'clui:rc-url',
+  RC_STOPPED: 'clui:rc-stopped',
 
   // Legacy (kept for backward compat during migration)
   STREAM_EVENT: 'clui:stream-event',

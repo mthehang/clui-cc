@@ -153,8 +153,8 @@ export function prependBinDirToPath(env: NodeJS.ProcessEnv, binaryPath: string):
  */
 export function encodeProjectPath(cwd: string): string {
   if (IS_WIN) {
-    // Remove the colon from drive letter, replace separators with dashes.
-    return cwd.replace(/:/g, '').replace(/[\\/]/g, '-')
+    // Replace colon and separators with dashes (C:\ → C--, matching Claude CLI encoding).
+    return cwd.replace(/:/g, '-').replace(/[\\/]/g, '-')
   }
   return cwd.replace(/\//g, '-')
 }

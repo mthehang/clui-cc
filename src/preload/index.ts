@@ -27,6 +27,7 @@ export interface CluiAPI {
   listSessions(projectPath?: string): Promise<SessionMeta[]>
   loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
   listLocalSkills(): Promise<Array<{ name: string; description: string; source: 'skill' | 'command' }>>
+  runCliLogin(): Promise<{ ok: boolean; error?: string }>
   fetchMarketplace(forceRefresh?: boolean): Promise<{ plugins: CatalogPlugin[]; error: string | null }>
   listInstalledPlugins(): Promise<string[]>
   installPlugin(repo: string, pluginName: string, marketplace: string, sourcePath?: string, isSkillMd?: boolean): Promise<{ ok: boolean; error?: string }>
@@ -45,6 +46,13 @@ export interface CluiAPI {
   deleteWhisperModel(model: string): Promise<{ ok: boolean; error?: string }>
   downloadWhisperModel(model: string): Promise<{ ok: boolean; error?: string }>
   detectGpu(): Promise<{ hasGpu: boolean; name: string }>
+  checkCuda(): Promise<{ installed: boolean }>
+  downloadCuda(): Promise<{ ok: boolean; error?: string }>
+  deleteCuda(): Promise<{ ok: boolean; deleted?: number }>
+  rcStart(tabId: string, sessionId: string, projectPath: string): Promise<{ ok: boolean; url?: string | null }>
+  rcStop(tabId: string): Promise<{ ok: boolean }>
+  onRcUrl(callback: (tabId: string, url: string) => void): () => void
+  onRcStopped(callback: (tabId: string) => void): () => void
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
   getAppVersion(): Promise<string>
@@ -98,6 +106,7 @@ const api: CluiAPI = {
   listSessions: (projectPath?: string) => ipcRenderer.invoke(IPC.LIST_SESSIONS, projectPath),
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
   listLocalSkills: () => ipcRenderer.invoke(IPC.LIST_LOCAL_SKILLS),
+  runCliLogin: () => ipcRenderer.invoke(IPC.RUN_CLI_LOGIN),
   fetchMarketplace: (forceRefresh) => ipcRenderer.invoke(IPC.MARKETPLACE_FETCH, { forceRefresh }),
   listInstalledPlugins: () => ipcRenderer.invoke(IPC.MARKETPLACE_INSTALLED),
   installPlugin: (repo, pluginName, marketplace, sourcePath, isSkillMd) =>
@@ -118,6 +127,21 @@ const api: CluiAPI = {
   deleteWhisperModel: (model: string) => ipcRenderer.invoke(IPC.DELETE_WHISPER_MODEL, model),
   downloadWhisperModel: (model: string) => ipcRenderer.invoke(IPC.DOWNLOAD_WHISPER_MODEL, model),
   detectGpu: () => ipcRenderer.invoke(IPC.DETECT_GPU),
+  checkCuda: () => ipcRenderer.invoke(IPC.CHECK_CUDA),
+  downloadCuda: () => ipcRenderer.invoke(IPC.DOWNLOAD_CUDA),
+  deleteCuda: () => ipcRenderer.invoke(IPC.DELETE_CUDA),
+  rcStart: (tabId, sessionId, projectPath) => ipcRenderer.invoke(IPC.RC_START, { tabId, sessionId, projectPath }),
+  rcStop: (tabId) => ipcRenderer.invoke(IPC.RC_STOP, tabId),
+  onRcUrl: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, tabId: string, url: string) => callback(tabId, url)
+    ipcRenderer.on(IPC.RC_URL, handler)
+    return () => ipcRenderer.removeListener(IPC.RC_URL, handler)
+  },
+  onRcStopped: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, tabId: string) => callback(tabId)
+    ipcRenderer.on(IPC.RC_STOPPED, handler)
+    return () => ipcRenderer.removeListener(IPC.RC_STOPPED, handler)
+  },
   getTheme: () => ipcRenderer.invoke(IPC.GET_THEME),
   onThemeChange: (callback) => {
     const handler = (_e: Electron.IpcRendererEvent, isDark: boolean) => callback(isDark)
