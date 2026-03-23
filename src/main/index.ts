@@ -9,8 +9,8 @@ import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin, scanLocalSkills } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
-import { getCliEnv } from './cli-env'
-import { IS_MAC, IS_WIN, isAbsolutePath, getIconPath, encodeProjectPath, findBinaryInPath } from './platform'
+import { getCliEnv, clearCliPathCache } from './cli-env'
+import { IS_MAC, IS_WIN, isAbsolutePath, getIconPath, encodeProjectPath, findBinaryInPath, findClaudeBinary } from './platform'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError, AppSettings, CloudUsageResponse, UsageBarData } from '../shared/types'
 import { initAutoUpdater, checkForUpdate, downloadUpdate, installUpdate } from './updater'
@@ -151,7 +151,7 @@ function createWindow(): void {
 
   mainWindow = new BrowserWindow({
     width,
-    height,
+    height: height - 1,  // 1px margin prevents DPI rounding from overlapping the taskbar
     x,
     y,
     ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),  // NSPanel — non-activating, joins all spaces
@@ -230,7 +230,7 @@ function showWindow(source = 'unknown'): void {
   const cursor = screen.getCursorScreenPoint()
   const display = screen.getDisplayNearestPoint(cursor)
   const { x: dx, y: dy, width: dw, height: dh } = display.workArea
-  mainWindow.setBounds({ x: dx, y: dy, width: dw, height: dh })
+  mainWindow.setBounds({ x: dx, y: dy, width: dw, height: dh - 1 })
 
   // Always re-assert space membership — the flag can be lost after hide/show cycles
   // and must be set before show() so the window joins the active Space, not its
@@ -305,10 +305,11 @@ ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { for
 
 ipcMain.handle(IPC.START, async () => {
   log('IPC START — fetching static CLI info')
+  clearCliPathCache()  // Re-probe PATH on every start/retry
 
   const execFileAsync = promisify(execFile)
   const opts = { encoding: 'utf-8' as const, timeout: 5000, env: getCliEnv() }
-  const claudePath = findBinaryInPath('claude') || 'claude'
+  const claudePath = findClaudeBinary()
 
   const [vResult, authResult, mcpResult] = await Promise.allSettled([
     execFileAsync(claudePath, ['-v'], opts),
@@ -900,7 +901,7 @@ ipcMain.handle(IPC.LIST_LOCAL_SKILLS, async () => {
 })
 
 ipcMain.handle(IPC.RUN_CLI_LOGIN, async () => {
-  const claudePath = findBinaryInPath('claude') || 'claude'
+  const claudePath = findClaudeBinary()
   try {
     const { spawn } = require('child_process')
     // claude login opens a browser for OAuth — run detached so it doesn't block
@@ -1888,6 +1889,32 @@ app.whenReady().then(async () => {
     })
   }
 
+  // ─── Production: reposition window when display geometry changes ───
+  screen.on('display-metrics-changed', (_e, _display, changedMetrics) => {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return
+    if (!changedMetrics.includes('workArea') && !changedMetrics.includes('scaleFactor')) return
+    const cursor = screen.getCursorScreenPoint()
+    const d = screen.getDisplayNearestPoint(cursor)
+    const { x, y, width, height } = d.workArea
+    log(`display-metrics-changed: repositioning to workArea (${x},${y},${width}x${height})`)
+    mainWindow.setBounds({ x, y, width, height: height - 1 })
+  })
+
+  screen.on('display-added', () => {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return
+    const cursor = screen.getCursorScreenPoint()
+    const d = screen.getDisplayNearestPoint(cursor)
+    const { x, y, width, height } = d.workArea
+    mainWindow.setBounds({ x, y, width, height: height - 1 })
+  })
+
+  screen.on('display-removed', () => {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return
+    const cursor = screen.getCursorScreenPoint()
+    const d = screen.getDisplayNearestPoint(cursor)
+    const { x, y, width, height } = d.workArea
+    mainWindow.setBounds({ x, y, width, height: height - 1 })
+  })
 
   // Use saved shortcut if persisted, otherwise default
   const toggleShortcut = currentSettings.shortcut || (IS_MAC ? 'Alt+Space' : 'Ctrl+Alt+Space')

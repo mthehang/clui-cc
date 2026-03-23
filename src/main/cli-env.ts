@@ -5,6 +5,11 @@ import { IS_MAC, IS_WIN, PATH_SEP } from './platform'
 
 let cachedPath: string | null = null
 
+/** Invalidate the cached PATH so the next getCliPath() re-probes the system. */
+export function clearCliPathCache(): void {
+  cachedPath = null
+}
+
 function appendPathEntries(target: string[], seen: Set<string>, rawPath: string | undefined): void {
   if (!rawPath) return
   for (const entry of rawPath.split(PATH_SEP)) {
