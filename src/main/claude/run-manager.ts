@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process'
+import { existsSync } from 'fs'
 import { EventEmitter } from 'events'
 import { homedir } from 'os'
 import { StreamParser } from '../stream-parser'
@@ -107,7 +108,8 @@ export class RunManager extends EventEmitter {
   }
 
   startRun(requestId: string, options: RunOptions): RunHandle {
-    const cwd = options.projectPath === '~' ? homedir() : options.projectPath
+    const rawCwd = options.projectPath === '~' ? homedir() : options.projectPath
+    const cwd = rawCwd && existsSync(rawCwd) ? rawCwd : homedir()
 
     const args: string[] = [
       '-p',

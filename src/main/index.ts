@@ -839,7 +839,7 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
         // First dash after single letter is the colon
         const match = encoded.match(/^([A-Za-z])-(.*)$/)
         if (match) {
-          return match[1] + ':\\' + match[2].replace(/-/g, '\\')
+          return match[1] + ':' + match[2].replace(/-/g, '\\')
         }
         return encoded.replace(/-/g, '\\')
       }
