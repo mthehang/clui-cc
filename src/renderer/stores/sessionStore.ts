@@ -115,9 +115,7 @@ interface State {
   addSystemMessage: (content: string) => void
   sendMessage: (prompt: string, projectPath?: string) => void
   respondPermission: (tabId: string, questionId: string, optionId: string) => void
-  addDirectory: (dir: string) => void
-  removeDirectory: (dir: string) => void
-  setBaseDirectory: (dir: string) => void
+  changeDirectory: (dir: string) => void
   addAttachments: (attachments: Attachment[]) => void
   removeAttachment: (attachmentId: string) => void
   clearAttachments: () => void
@@ -167,7 +165,6 @@ function makeLocalTab(): TabState {
     queuedPrompts: [],
     workingDirectory: '~',
     hasChosenDirectory: false,
-    additionalDirs: [],
   }
 }
 
@@ -480,7 +477,8 @@ export const useSessionStore = create<State>((set, get) => ({
   },
 
   resumeSession: async (sessionId, title, projectPath) => {
-    const defaultDir = projectPath || get().staticInfo?.homePath || '~'
+    const homePath = get().staticInfo?.homePath || '~'
+    const defaultDir = projectPath || `${homePath}/claude-default`
     try {
       const { tabId } = await window.clui.createTab()
 
@@ -567,34 +565,7 @@ export const useSessionStore = create<State>((set, get) => ({
 
   // ─── Directory management ───
 
-  addDirectory: (dir) => {
-    const { activeTabId } = get()
-    set((s) => ({
-      tabs: s.tabs.map((t) =>
-        t.id === activeTabId
-          ? {
-              ...t,
-              additionalDirs: t.additionalDirs.includes(dir)
-                ? t.additionalDirs
-                : [...t.additionalDirs, dir],
-            }
-          : t
-      ),
-    }))
-  },
-
-  removeDirectory: (dir) => {
-    const { activeTabId } = get()
-    set((s) => ({
-      tabs: s.tabs.map((t) =>
-        t.id === activeTabId
-          ? { ...t, additionalDirs: t.additionalDirs.filter((d) => d !== dir) }
-          : t
-      ),
-    }))
-  },
-
-  setBaseDirectory: (dir) => {
+  changeDirectory: (dir) => {
     const { activeTabId } = get()
     window.clui.resetTabSession(activeTabId)
     set((s) => ({
@@ -605,7 +576,6 @@ export const useSessionStore = create<State>((set, get) => ({
               workingDirectory: dir,
               hasChosenDirectory: true,
               claudeSessionId: null,
-              additionalDirs: [],
             }
           : t
       ),
@@ -650,8 +620,9 @@ export const useSessionStore = create<State>((set, get) => ({
   sendMessage: (prompt, projectPath) => {
     const { activeTabId, tabs, staticInfo } = get()
     const tab = tabs.find((t) => t.id === activeTabId)
-    // Use explicitly chosen directory, otherwise fall back to user home
-    const resolvedPath = projectPath || (tab?.hasChosenDirectory ? tab.workingDirectory : (staticInfo?.homePath || tab?.workingDirectory || '~'))
+    // Use explicitly chosen directory, otherwise fall back to claude-default
+    const homePath = staticInfo?.homePath || '~'
+    const resolvedPath = projectPath || (tab?.hasChosenDirectory ? tab.workingDirectory : `${homePath}/claude-default`)
     if (!tab) return
 
     // Guard: don't send while connecting (warmup in progress)
@@ -738,7 +709,6 @@ export const useSessionStore = create<State>((set, get) => ({
       projectPath: resolvedPath,
       sessionId: tab.claudeSessionId || undefined,
       model: preferredModel || undefined,
-      addDirs: tab.additionalDirs.length > 0 ? tab.additionalDirs : undefined,
       thinkingBudget: effectiveThinkingBudget,
 
       systemPrompt,

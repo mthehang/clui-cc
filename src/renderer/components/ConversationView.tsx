@@ -287,7 +287,7 @@ export function ConversationView() {
 // ─── Empty State (directory picker before first message) ───
 
 function EmptyState() {
-  const setBaseDirectory = useSessionStore((s) => s.setBaseDirectory)
+  const changeDirectory = useSessionStore((s) => s.changeDirectory)
   const staticInfo = useSessionStore((s) => s.staticInfo)
   const colors = useColors()
   const t = useT()
@@ -306,7 +306,7 @@ function EmptyState() {
 
   const handleChooseFolder = async () => {
     const dir = await window.clui.selectDirectory()
-    if (dir) setBaseDirectory(dir)
+    if (dir) changeDirectory(dir)
   }
 
   // ─── CLI not installed ───

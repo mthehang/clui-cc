@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck, Keyboard, Gauge, Warning, ListChecks, Question, PencilSimple, Lightning } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, ShieldCheck, Keyboard, Gauge, Warning, ListChecks, Question, PencilSimple, Lightning } from '@phosphor-icons/react'
 import type { IconWeight } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
@@ -478,7 +478,6 @@ export function StatusBar() {
     (s) => s.tabs.find((t) => t.id === s.activeTabId),
     (a, b) => a === b || (!!a && !!b
       && a.status === b.status
-      && a.additionalDirs === b.additionalDirs
       && a.hasChosenDirectory === b.hasChosenDirectory
       && a.workingDirectory === b.workingDirectory
       && a.claudeSessionId === b.claudeSessionId
@@ -486,8 +485,7 @@ export function StatusBar() {
       && a.cumulativeUsage.totalOutputTokens === b.cumulativeUsage.totalOutputTokens
     ),
   )
-  const addDirectory = useSessionStore((s) => s.addDirectory)
-  const removeDirectory = useSessionStore((s) => s.removeDirectory)
+  const changeDirectory = useSessionStore((s) => s.changeDirectory)
   const expandedUI = useThemeStore((s) => s.expandedUI)
   const compact = !expandedUI
   const popoverLayer = usePopoverLayer()
@@ -515,7 +513,6 @@ export function StatusBar() {
 
   const isRunning = tab.status === 'running' || tab.status === 'connecting'
   const isEmpty = tab.messages.length === 0
-  const hasExtraDirs = tab.additionalDirs.length > 0
 
   const handleOpenInTerminal = () => {
     window.clui.openInTerminal(tab.claudeSessionId, tab.workingDirectory)
@@ -533,15 +530,16 @@ export function StatusBar() {
     setDirOpen((o) => !o)
   }
 
-  const handleAddDir = async () => {
+  const handleChangeDir = async () => {
     const dir = await window.clui.selectDirectory()
     if (dir) {
-      addDirectory(dir)
+      changeDirectory(dir)
+      setDirOpen(false)
     }
   }
 
   const dirTooltip = tab.hasChosenDirectory
-    ? [tab.workingDirectory, ...tab.additionalDirs].join('\n')
+    ? tab.workingDirectory
     : t('status.dir.choose')
 
   return (
@@ -566,9 +564,6 @@ export function StatusBar() {
         >
           <FolderOpen size={11} className="flex-shrink-0" />
           {!compact && <span className="truncate">{tab.hasChosenDirectory ? compactPath(tab.workingDirectory) : '—'}</span>}
-          {hasExtraDirs && (
-            <span style={{ color: colors.textTertiary, fontWeight: 600 }}>+{tab.additionalDirs.length}</span>
-          )}
         </button>
 
         {/* Directory popover */}
@@ -599,48 +594,21 @@ export function StatusBar() {
                 <div className="text-[9px] uppercase tracking-wider mb-1" style={{ color: colors.textTertiary }}>
                   Base directory
                 </div>
-                <div className="text-[11px] truncate" style={{ color: tab.hasChosenDirectory ? colors.textSecondary : colors.textMuted }} title={tab.hasChosenDirectory ? tab.workingDirectory : 'No folder selected — defaults to home directory'}>
-                  {tab.hasChosenDirectory ? tab.workingDirectory : 'None (defaults to ~)'}
+                <div className="text-[11px] truncate" style={{ color: tab.hasChosenDirectory ? colors.textSecondary : colors.textMuted }} title={tab.hasChosenDirectory ? tab.workingDirectory : 'No folder selected — defaults to claude-default'}>
+                  {tab.hasChosenDirectory ? tab.workingDirectory : 'None (defaults to claude-default)'}
                 </div>
               </div>
 
-              {/* Additional directories */}
-              {hasExtraDirs && (
-                <>
-                  <div className="mx-2 my-1" style={{ height: 1, background: colors.popoverBorder }} />
-                  <div className="px-2 py-1">
-                    <div className="text-[9px] uppercase tracking-wider mb-1" style={{ color: colors.textTertiary }}>
-                      Added directories
-                    </div>
-                    {tab.additionalDirs.map((dir) => (
-                      <div key={dir} className="flex items-center justify-between py-0.5 group">
-                        <span className="text-[11px] truncate mr-2" style={{ color: colors.textSecondary }} title={dir}>
-                          {compactPath(dir)}
-                        </span>
-                        <button
-                          onClick={() => removeDirectory(dir)}
-                          className="flex-shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          style={{ color: colors.textTertiary }}
-                          title="Remove directory"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-
               <div className="mx-2 my-1" style={{ height: 1, background: colors.popoverBorder }} />
 
-              {/* Add directory button */}
+              {/* Change directory button */}
               <button
-                onClick={handleAddDir}
+                onClick={handleChangeDir}
                 className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] transition-colors rounded-lg"
                 style={{ color: colors.accent }}
               >
-                <Plus size={10} />
-                {t('status.dir.add')}
+                <FolderOpen size={10} />
+                {t('status.dir.change') || 'Change directory'}
               </button>
             </div>
           </motion.div>,

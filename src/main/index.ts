@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, clipboard, desktopCapturer } from 'electron'
 import { join } from 'path'
-import { existsSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { execFile } from 'child_process'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
@@ -305,6 +305,11 @@ ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { for
 
 ipcMain.handle(IPC.START, async () => {
   log('IPC START — fetching static CLI info')
+
+  // Ensure claude-default working directory exists
+  const claudeDefaultDir = join(homedir(), 'claude-default')
+  mkdirSync(claudeDefaultDir, { recursive: true })
+
   clearCliPathCache()  // Re-probe PATH on every start/retry
 
   const execFileAsync = promisify(execFile)

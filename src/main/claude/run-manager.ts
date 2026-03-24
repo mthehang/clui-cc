@@ -139,12 +139,6 @@ export class RunManager extends EventEmitter {
     if (options.thinkingBudget) {
       args.push('--thinking', 'enabled')
     }
-    if (options.addDirs && options.addDirs.length > 0) {
-      for (const dir of options.addDirs) {
-        args.push('--add-dir', dir)
-      }
-    }
-
     if (options.hookSettingsPath) {
       // CLUI-scoped hook settings: the PreToolUse HTTP hook handles permissions
       // for dangerous tools (Bash, Edit, Write, MultiEdit).

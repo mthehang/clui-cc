@@ -170,8 +170,6 @@ export interface TabState {
   workingDirectory: string
   /** Whether the user explicitly chose a directory (vs. using default home) */
   hasChosenDirectory: boolean
-  /** Extra directories accessible via --add-dir (session-preserving) */
-  additionalDirs: string[]
 }
 
 export interface Message {
@@ -230,8 +228,6 @@ export interface RunOptions {
   model?: string
   /** Path to CLUI-scoped settings file with hook config (passed via --settings) */
   hookSettingsPath?: string
-  /** Extra directories to add via --add-dir (session-preserving) */
-  addDirs?: string[]
   permissionMode?: string
   thinkingBudget?: number
 }
