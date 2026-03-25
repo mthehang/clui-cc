@@ -45,7 +45,7 @@ export function HistoryPicker() {
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
-  const [showAll, setShowAll] = useState(true)
+  const [showAll, setShowAll] = useState(!activeTab?.hasChosenDirectory)
   const effectiveProjectPath = activeTab?.hasChosenDirectory
     ? activeTab.workingDirectory
     : (staticInfo?.homePath || activeTab?.workingDirectory || '~')

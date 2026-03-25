@@ -58,6 +58,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   whisperLanguage: 'auto',
   whisperDevice: 'auto',
   appLanguage: 'en',
+  windowMarginTop: 0,
+  windowMarginBottom: 0,
+  windowMarginLeft: 0,
+  windowMarginRight: 0,
 }
 
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
@@ -148,12 +152,16 @@ function createWindow(): void {
   const cursor = screen.getCursorScreenPoint()
   const display = screen.getDisplayNearestPoint(cursor)
   const { x, y, width, height } = display.workArea
+  const mt = currentSettings.windowMarginTop || 0
+  const mb = currentSettings.windowMarginBottom || 0
+  const ml = currentSettings.windowMarginLeft || 0
+  const mr = currentSettings.windowMarginRight || 0
 
   mainWindow = new BrowserWindow({
-    width,
-    height: height - 1,  // 1px margin prevents DPI rounding from overlapping the taskbar
-    x,
-    y,
+    width: width - ml - mr,
+    height: height - 1 - mt - mb,
+    x: x + ml,
+    y: y + mt,
     ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),  // NSPanel — non-activating, joins all spaces
     frame: false,
     ...(IS_MAC ? { titleBarStyle: 'hidden' as const } : {}),
@@ -230,7 +238,11 @@ function showWindow(source = 'unknown'): void {
   const cursor = screen.getCursorScreenPoint()
   const display = screen.getDisplayNearestPoint(cursor)
   const { x: dx, y: dy, width: dw, height: dh } = display.workArea
-  mainWindow.setBounds({ x: dx, y: dy, width: dw, height: dh - 1 })
+  const mt = currentSettings.windowMarginTop || 0
+  const mb = currentSettings.windowMarginBottom || 0
+  const ml = currentSettings.windowMarginLeft || 0
+  const mr = currentSettings.windowMarginRight || 0
+  mainWindow.setBounds({ x: dx + ml, y: dy + mt, width: dw - ml - mr, height: dh - 1 - mt - mb })
 
   // Always re-assert space membership — the flag can be lost after hide/show cycles
   // and must be set before show() so the window joins the active Space, not its
@@ -313,7 +325,7 @@ ipcMain.handle(IPC.START, async () => {
   clearCliPathCache()  // Re-probe PATH on every start/retry
 
   const execFileAsync = promisify(execFile)
-  const opts = { encoding: 'utf-8' as const, timeout: 5000, env: getCliEnv() }
+  const opts = { encoding: 'utf-8' as const, timeout: 5000, env: getCliEnv(), ...(IS_WIN ? { shell: true } : {}) }
   const claudePath = findClaudeBinary()
 
   const [vResult, authResult, mcpResult] = await Promise.allSettled([
@@ -844,11 +856,11 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
         // First dash after single letter is the colon
         const match = encoded.match(/^([A-Za-z])-(.*)$/)
         if (match) {
-          return match[1] + ':' + match[2].replace(/-/g, '\\')
+          return match[1] + ':\\' + match[2].replace(/-/g, '\\')
         }
         return encoded.replace(/-/g, '\\')
       }
-      return encoded.replace(/-/g, '/')
+      return '/' + encoded.replace(/-/g, '/')
     }
 
     const projectDirs = readdirSync(projectsRoot, { withFileTypes: true })
@@ -1896,6 +1908,7 @@ ipcMain.handle(IPC.CLI_EXECUTE, async (_event, { command }: { command: string })
     const { stdout, stderr } = await execFileAsync(claudePath, args, {
       timeout: 30_000,
       env: { ...process.env, FORCE_COLOR: '0' },
+      ...(IS_WIN ? { shell: true } : {}),
     })
     return { ok: true, output: stdout || stderr || 'Command completed.' }
   } catch (err: any) {

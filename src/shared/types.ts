@@ -331,6 +331,10 @@ export interface AppSettings {
   whisperLanguage: string
   whisperDevice: string
   appLanguage: string
+  windowMarginTop: number
+  windowMarginBottom: number
+  windowMarginLeft: number
+  windowMarginRight: number
 }
 
 // ─── Cloud Usage Types (claude.ai-style bars) ───

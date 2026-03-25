@@ -155,9 +155,13 @@ export function prependBinDirToPath(env: NodeJS.ProcessEnv, binaryPath: string):
  * On Windows: C:\Users\me\project → C-Users-me-project
  */
 export function encodeProjectPath(cwd: string): string {
+  // Normalize: resolve trailing slashes, use consistent separators
+  let normalized = cwd.replace(/[\\/]+$/, '') // strip trailing slashes
   if (IS_WIN) {
-    // Replace colon and separators with dashes (C:\ → C--, matching Claude CLI encoding).
-    return cwd.replace(/:/g, '-').replace(/[\\/]/g, '-')
+    normalized = normalized.replace(/\//g, '\\') // normalize to backslash on Windows
+    // Uppercase drive letter for consistent encoding (c: → C:)
+    normalized = normalized.replace(/^([a-z]):/, (_, d) => d.toUpperCase() + ':')
+    return normalized.replace(/:/g, '-').replace(/\\/g, '-')
   }
-  return cwd.replace(/\//g, '-')
+  return normalized.replace(/\//g, '-')
 }

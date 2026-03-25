@@ -6,7 +6,7 @@ import { StreamParser } from '../stream-parser'
 import { normalize } from './event-normalizer'
 import { log as _log } from '../logger'
 import { getCliEnv } from '../cli-env'
-import { findClaudeBinary, prependBinDirToPath } from '../platform'
+import { findClaudeBinary, prependBinDirToPath, IS_WIN } from '../platform'
 import type { ClaudeEvent, NormalizedEvent, RunOptions, EnrichedError } from '../../shared/types'
 
 const MAX_RING_LINES = 100
@@ -181,6 +181,7 @@ export class RunManager extends EventEmitter {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd,
       env: this._getEnv(),
+      shell: IS_WIN,
     })
 
     log(`Spawned PID: ${child.pid}`)

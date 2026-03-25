@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon, Microphone, Keyboard, MagnifyingGlassPlus, MagnifyingGlassMinus, ArrowCounterClockwise, Power, EyeSlash, Translate, NotePencil, CheckCircle, DownloadSimple, Trash, CaretRight, CircleNotch, ArrowsClockwise } from '@phosphor-icons/react'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, Microphone, Keyboard, MagnifyingGlassPlus, MagnifyingGlassMinus, ArrowCounterClockwise, Power, EyeSlash, Translate, NotePencil, CheckCircle, DownloadSimple, Trash, CaretRight, CircleNotch, ArrowsClockwise, Browsers } from '@phosphor-icons/react'
 import type { UpdateStatus } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
@@ -778,6 +778,60 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
   )
 }
 
+/* ─── Window Margins ─── */
+
+function WindowMarginsSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const [margins, setMargins] = useState({ top: 0, bottom: 0, left: 0, right: 0 })
+
+  useEffect(() => {
+    window.clui.getSettings().then((s) => {
+      setMargins({
+        top: s.windowMarginTop || 0,
+        bottom: s.windowMarginBottom || 0,
+        left: s.windowMarginLeft || 0,
+        right: s.windowMarginRight || 0,
+      })
+    }).catch(() => {})
+  }, [])
+
+  const update = (key: 'top' | 'bottom' | 'left' | 'right', value: number) => {
+    const v = Math.max(0, Math.round(value))
+    setMargins((prev) => ({ ...prev, [key]: v }))
+    const settingKey = `windowMargin${key.charAt(0).toUpperCase() + key.slice(1)}` as
+      'windowMarginTop' | 'windowMarginBottom' | 'windowMarginLeft' | 'windowMarginRight'
+    window.clui.saveSettings({ [settingKey]: v })
+  }
+
+  const inputStyle = {
+    background: colors.surfacePrimary,
+    color: colors.textSecondary,
+    border: `1px solid ${colors.containerBorder}`,
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-[10px]" style={{ color: colors.textMuted }}>
+        Adjust if using custom taskbars (e.g. MyDock Finder)
+      </span>
+      <div className="grid grid-cols-2 gap-2">
+        {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
+          <div key={side} className="flex items-center justify-between gap-2">
+            <span className="text-[11px] capitalize" style={{ color: colors.textSecondary }}>{side}</span>
+            <input
+              type="number"
+              min={0}
+              value={margins[side]}
+              onChange={(e) => update(side, parseInt(e.target.value) || 0)}
+              className="w-14 text-[11px] rounded px-1.5 py-0.5 text-right outline-none"
+              style={inputStyle}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Settings popover ─── */
 
 export function SettingsPopover() {
@@ -1065,6 +1119,12 @@ export function SettingsPopover() {
 
             <CollapsibleSection colors={colors} icon={<Power size={14} style={{ color: colors.textTertiary }} />} label={t('settings.startup')}>
               <StartupSection colors={colors} />
+            </CollapsibleSection>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            <CollapsibleSection colors={colors} icon={<Browsers size={14} style={{ color: colors.textTertiary }} />} label="Window Margins">
+              <WindowMarginsSection colors={colors} />
             </CollapsibleSection>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />

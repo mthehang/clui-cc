@@ -487,7 +487,12 @@ export const useSessionStore = create<State>((set, get) => ({
 
   resumeSession: async (sessionId, title, projectPath) => {
     const homePath = get().staticInfo?.homePath || '~'
-    const defaultDir = projectPath || `${homePath}/claude-default`
+    // Normalize projectPath: strip trailing slashes, fix separators
+    const isWin = navigator.userAgent.includes('Windows') || navigator.platform?.startsWith('Win')
+    const normalizedPath = projectPath
+      ? projectPath.replace(/[\\/]+$/, '').replace(isWin ? /\//g : /\\/g, isWin ? '\\' : '/')
+      : null
+    const defaultDir = normalizedPath || `${homePath}/claude-default`
     try {
       const { tabId } = await window.clui.createTab()
 
@@ -508,7 +513,7 @@ export const useSessionStore = create<State>((set, get) => ({
         claudeSessionId: sessionId,
         title: title || 'Resumed Session',
         workingDirectory: defaultDir,
-        hasChosenDirectory: !!projectPath,
+        hasChosenDirectory: !!normalizedPath,
         messages,
       }
       set((s) => ({
@@ -523,7 +528,7 @@ export const useSessionStore = create<State>((set, get) => ({
       tab.claudeSessionId = sessionId
       tab.title = title || 'Resumed Session'
       tab.workingDirectory = defaultDir
-      tab.hasChosenDirectory = !!projectPath
+      tab.hasChosenDirectory = !!normalizedPath
       set((s) => ({
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
