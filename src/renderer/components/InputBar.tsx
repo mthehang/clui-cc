@@ -308,6 +308,31 @@ export function InputBar() {
       case '/bug':
         window.clui.openExternal('https://github.com/anthropics/claude-code/issues')
         break
+      case '/plugin':
+      case '/marketplace':
+        window.dispatchEvent(new CustomEvent('clui:open-marketplace'))
+        break
+      case '/theme': {
+        const modes = ['dark', 'light', 'system'] as const
+        const current = useThemeStore.getState().themeMode
+        const idx = modes.indexOf(current)
+        const next = modes[(idx + 1) % modes.length]
+        useThemeStore.getState().setThemeMode(next)
+        addSystemMessage(`Theme: ${current} \u2192 ${next}`)
+        break
+      }
+      default: {
+        // CLI passthrough — run any unrecognized command via claude CLI
+        const cmdName = cmd.command.replace(/^\//, '')
+        addSystemMessage(`Running: claude ${cmdName}...`)
+        try {
+          const result = await window.clui.executeCliCommand(cmdName)
+          addSystemMessage(result.output || 'Command completed.')
+        } catch (err: any) {
+          addSystemMessage(`Error: ${err.message || 'Command failed.'}`)
+        }
+        break
+      }
     }
   }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel, sendMessage])
 
@@ -352,6 +377,20 @@ export function InputBar() {
         setSlashFilter(null)
         addSystemMessage(`Unknown model "${modelMatch[1]}". Available: opus, sonnet, haiku`)
       }
+      return
+    }
+    // CLI passthrough: any "/command args" not handled above
+    const cliMatch = prompt.match(/^\/(\S+)\s+(.+)/s)
+    if (cliMatch) {
+      const fullCmd = `${cliMatch[1]} ${cliMatch[2]}`
+      setInput('')
+      setSlashFilter(null)
+      addSystemMessage(`Running: claude ${fullCmd}...`)
+      window.clui.executeCliCommand(fullCmd).then((result) => {
+        addSystemMessage(result.output || 'Command completed.')
+      }).catch((err: any) => {
+        addSystemMessage(`Error: ${err.message || 'Command failed.'}`)
+      })
       return
     }
     if (!prompt && attachments.length === 0) return

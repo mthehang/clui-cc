@@ -120,6 +120,16 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  // ─── Open marketplace via custom event ───
+  useEffect(() => {
+    const handler = () => {
+      const s = useSessionStore.getState()
+      if (!s.marketplaceOpen) s.toggleMarketplace()
+    }
+    window.addEventListener('clui:open-marketplace', handler)
+    return () => window.removeEventListener('clui:open-marketplace', handler)
+  }, [])
+
   // ─── Window show/hide animation ───
   const [windowVisible, setWindowVisible] = useState(false)
 

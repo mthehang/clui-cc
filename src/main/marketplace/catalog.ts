@@ -44,17 +44,76 @@ function log(msg: string): void {
 
 // ─── Sources ───
 
-const SOURCES = [
+const BUILTIN_SOURCES = [
   { repo: 'anthropics/skills', category: 'Agent Skills' },
   { repo: 'anthropics/knowledge-work-plugins', category: 'Knowledge Work' },
   { repo: 'anthropics/financial-services-plugins', category: 'Financial Services' },
-] as const
+]
+
+// ─── Custom Sources (persisted) ───
+
+const CUSTOM_SOURCES_FILE = join(homedir(), '.claude', 'marketplace-sources.json')
+let customSources: Array<{ repo: string; category: string }> = []
+
+async function loadCustomSources(): Promise<void> {
+  try {
+    const raw = await readFile(CUSTOM_SOURCES_FILE, 'utf-8')
+    customSources = JSON.parse(raw)
+  } catch {
+    customSources = []
+  }
+}
+
+async function saveCustomSources(): Promise<void> {
+  const dir = join(homedir(), '.claude')
+  await mkdir(dir, { recursive: true })
+  await writeFile(CUSTOM_SOURCES_FILE, JSON.stringify(customSources, null, 2), 'utf-8')
+}
+
+export async function addCustomSource(repo: string): Promise<{ ok: boolean; error?: string }> {
+  if (!validateRepo(repo)) return { ok: false, error: 'Invalid repo format. Use owner/repo.' }
+  await loadCustomSources()
+  if (customSources.some((s) => s.repo === repo) || BUILTIN_SOURCES.some((s) => s.repo === repo)) {
+    return { ok: false, error: 'Source already exists.' }
+  }
+  // Verify the repo has a marketplace.json
+  const testUrl = `https://raw.githubusercontent.com/${repo}/main/.claude-plugin/marketplace.json`
+  try {
+    const res = await netFetch(testUrl)
+    if (!res.ok) return { ok: false, error: `No marketplace.json found in ${repo}.` }
+  } catch {
+    return { ok: false, error: `Could not reach ${repo}.` }
+  }
+  customSources.push({ repo, category: 'Community' })
+  await saveCustomSources()
+  cachedPlugins = null // Invalidate cache
+  return { ok: true }
+}
+
+export async function removeCustomSource(repo: string): Promise<{ ok: boolean; error?: string }> {
+  await loadCustomSources()
+  const before = customSources.length
+  customSources = customSources.filter((s) => s.repo !== repo)
+  if (customSources.length === before) return { ok: false, error: 'Source not found.' }
+  await saveCustomSources()
+  cachedPlugins = null
+  return { ok: true }
+}
+
+export async function listCustomSources(): Promise<Array<{ repo: string; category: string }>> {
+  await loadCustomSources()
+  return [...BUILTIN_SOURCES, ...customSources]
+}
+
+function getAllSources() {
+  return [...BUILTIN_SOURCES, ...customSources]
+}
 
 // ─── TTL Cache ───
 
 let cachedPlugins: CatalogPlugin[] | null = null
 let cacheTimestamp = 0
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+const CACHE_TTL = 60 * 1000 // 60 seconds
 
 // Cache raw SKILL.md content keyed by skill name for direct installation
 const skillContentCache = new Map<string, string>()
@@ -69,8 +128,9 @@ export async function fetchCatalog(forceRefresh?: boolean): Promise<{ plugins: C
   const allPlugins: CatalogPlugin[] = []
   const errors: string[] = []
 
+  await loadCustomSources()
   const results = await Promise.allSettled(
-    SOURCES.map(async (source) => {
+    getAllSources().map(async (source) => {
       const marketplaceUrl = `https://raw.githubusercontent.com/${source.repo}/main/.claude-plugin/marketplace.json`
       log(`Fetching marketplace: ${marketplaceUrl}`)
 

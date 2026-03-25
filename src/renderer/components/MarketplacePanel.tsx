@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, MagnifyingGlass, SpinnerGap, ArrowClockwise, HeadCircuit, Compass, GithubLogo } from '@phosphor-icons/react'
+import { X, MagnifyingGlass, SpinnerGap, ArrowClockwise, HeadCircuit, Compass, GithubLogo, Plus } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useColors } from '../theme'
 import { useT } from '../i18n'
@@ -23,6 +23,49 @@ export function MarketplacePanel() {
 
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // Custom sources management
+  const [sources, setSources] = useState<Array<{ repo: string; category: string }>>([])
+  const [showAddSource, setShowAddSource] = useState(false)
+  const [newSourceRepo, setNewSourceRepo] = useState('')
+  const [addSourceError, setAddSourceError] = useState<string | null>(null)
+  const [addingSource, setAddingSource] = useState(false)
+  const addSourceRef = useRef<HTMLInputElement>(null)
+
+  const builtinRepos = useMemo(() => new Set([
+    'anthropics/skills', 'anthropics/knowledge-work-plugins', 'anthropics/financial-services-plugins',
+  ]), [])
+
+  useEffect(() => {
+    window.clui.listMarketplaceSources().then(setSources).catch(() => {})
+  }, [])
+
+  const handleAddSource = useCallback(async () => {
+    const repo = newSourceRepo.trim()
+    if (!repo) return
+    setAddingSource(true)
+    setAddSourceError(null)
+    try {
+      const result = await window.clui.addMarketplaceSource(repo)
+      if (result.ok) {
+        setNewSourceRepo('')
+        setShowAddSource(false)
+        setSources(await window.clui.listMarketplaceSources())
+        loadMarketplace(true)
+      } else {
+        setAddSourceError(result.error || 'Failed to add source.')
+      }
+    } catch (err: any) {
+      setAddSourceError(err.message || 'Failed.')
+    }
+    setAddingSource(false)
+  }, [newSourceRepo, loadMarketplace])
+
+  const handleRemoveSource = useCallback(async (repo: string) => {
+    await window.clui.removeMarketplaceSource(repo)
+    setSources(await window.clui.listMarketplaceSources())
+    loadMarketplace(true)
+  }, [loadMarketplace])
 
   // Derive filter chips dynamically from catalog semantic tags, sorted by frequency
   const filters = useMemo(() => {
@@ -167,6 +210,81 @@ export function MarketplacePanel() {
             <X size={14} />
           </button>
         </div>
+      </div>
+
+      {/* Sources */}
+      <div style={{
+        padding: '8px 18px',
+        borderBottom: `1px solid ${colors.containerBorder}`,
+        display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
+      }}>
+        <span style={{ fontSize: 10, color: colors.textTertiary, textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: 4 }}>
+          Sources
+        </span>
+        {sources.map((s) => (
+          <span
+            key={s.repo}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              fontSize: 10, padding: '2px 8px', borderRadius: 9999,
+              background: colors.surfaceHover,
+              color: colors.textSecondary,
+              border: `1px solid ${colors.containerBorder}`,
+            }}
+          >
+            {s.repo.split('/')[1] || s.repo}
+            {!builtinRepos.has(s.repo) && (
+              <button
+                onClick={() => handleRemoveSource(s.repo)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textMuted, padding: 0, display: 'flex' }}
+                title={`Remove ${s.repo}`}
+              >
+                <X size={8} />
+              </button>
+            )}
+          </span>
+        ))}
+        {!showAddSource ? (
+          <button
+            onClick={() => { setShowAddSource(true); requestAnimationFrame(() => addSourceRef.current?.focus()) }}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontSize: 10, padding: '2px 8px', borderRadius: 9999,
+              background: 'transparent', border: `1px dashed ${colors.containerBorder}`,
+              color: colors.accent, cursor: 'pointer',
+            }}
+          >
+            <Plus size={8} /> Add repo
+          </button>
+        ) : (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <input
+              ref={addSourceRef}
+              type="text"
+              value={newSourceRepo}
+              onChange={(e) => setNewSourceRepo(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddSource(); if (e.key === 'Escape') setShowAddSource(false) }}
+              placeholder="owner/repo"
+              style={{
+                fontSize: 10, padding: '2px 6px', borderRadius: 4, width: 120,
+                background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}`,
+                color: colors.textPrimary, outline: 'none',
+              }}
+              disabled={addingSource}
+            />
+            <button
+              onClick={handleAddSource}
+              disabled={addingSource}
+              style={{
+                fontSize: 10, padding: '2px 6px', borderRadius: 4,
+                background: colors.accent, color: '#fff', border: 'none', cursor: 'pointer',
+              }}
+            >
+              {addingSource ? '...' : 'Add'}
+            </button>
+            {addSourceError && <span style={{ fontSize: 9, color: colors.statusError }}>{addSourceError}</span>}
+          </span>
+        )}
       </div>
 
       {/* Installed + Search + Build your own */}

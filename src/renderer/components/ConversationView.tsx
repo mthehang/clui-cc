@@ -169,7 +169,7 @@ export function ConversationView() {
           </div>
         )}
 
-        <div className="space-y-1 relative">
+        <div className="space-y-2.5 relative">
           {grouped.map((item, idx) => {
             const msgIndex = startIndex + idx
             const isHistorical = msgIndex < historicalThreshold

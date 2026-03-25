@@ -13,9 +13,10 @@ import { useT } from '../i18n'
 function ModelPicker() {
   const preferredModel = useSessionStore((s) => s.preferredModel)
   const setPreferredModel = useSessionStore((s) => s.setPreferredModel)
+  const setTabModel = useSessionStore((s) => s.setTabModel)
   const tab = useSessionStore(
     (s) => s.tabs.find((t) => t.id === s.activeTabId),
-    (a, b) => a === b || (!!a && !!b && a.status === b.status && a.sessionModel === b.sessionModel),
+    (a, b) => a === b || (!!a && !!b && a.status === b.status && a.sessionModel === b.sessionModel && a.tabModel === b.tabModel),
   )
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
@@ -54,10 +55,11 @@ function ModelPicker() {
     setOpen((o) => !o)
   }
 
+  const effectiveModel = tab?.tabModel ?? preferredModel
   const activeLabel = (() => {
-    if (preferredModel) {
-      const m = AVAILABLE_MODELS.find((m) => m.id === preferredModel)
-      return m?.label || getModelDisplayLabel(preferredModel)
+    if (effectiveModel) {
+      const m = AVAILABLE_MODELS.find((m) => m.id === effectiveModel)
+      return m?.label || getModelDisplayLabel(effectiveModel)
     }
     if (tab?.sessionModel) {
       return getModelDisplayLabel(tab.sessionModel)
@@ -105,11 +107,11 @@ function ModelPicker() {
         >
           <div className="py-1">
             {AVAILABLE_MODELS.map((m) => {
-              const isSelected = preferredModel === m.id || (!preferredModel && m.id === AVAILABLE_MODELS[0].id)
+              const isSelected = effectiveModel === m.id || (!effectiveModel && m.id === AVAILABLE_MODELS[0].id)
               return (
                 <button
                   key={m.id}
-                  onClick={() => { setPreferredModel(m.id); setOpen(false) }}
+                  onClick={() => { if (tab) setTabModel(tab.id, m.id); else setPreferredModel(m.id); setOpen(false) }}
                   className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
                   style={{
                     color: isSelected ? colors.textPrimary : colors.textSecondary,
@@ -129,12 +131,18 @@ function ModelPicker() {
   )
 }
 
-/* ─── Permission Mode Picker (global — affects all tabs) ─── */
+/* ─── Permission Mode Picker (per-tab with global fallback) ─── */
 
 function PermissionModePicker() {
   const t = useT()
-  const permissionMode = useSessionStore((s) => s.permissionMode)
+  const globalPermissionMode = useSessionStore((s) => s.permissionMode)
   const setPermissionMode = useSessionStore((s) => s.setPermissionMode)
+  const setTabPermissionMode = useSessionStore((s) => s.setTabPermissionMode)
+  const tab = useSessionStore(
+    (s) => s.tabs.find((t) => t.id === s.activeTabId),
+    (a, b) => a === b || (!!a && !!b && a.tabPermissionMode === b.tabPermissionMode),
+  )
+  const permissionMode = tab?.tabPermissionMode ?? globalPermissionMode
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
@@ -167,6 +175,12 @@ function PermissionModePicker() {
   const handleToggle = () => {
     if (!open) updatePos()
     setOpen((o) => !o)
+  }
+
+  const handleSetMode = (mode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass') => {
+    if (tab) setTabPermissionMode(tab.id, mode)
+    else setPermissionMode(mode)
+    setOpen(false)
   }
 
   const isBypass = permissionMode === 'bypass'
@@ -228,7 +242,7 @@ function PermissionModePicker() {
         >
           <div className="py-1">
             <button
-              onClick={() => { setPermissionMode('plan'); setOpen(false) }}
+              onClick={() => handleSetMode('plan')}
               className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
               style={{
                 color: isPlan ? '#60a5fa' : colors.textSecondary,
@@ -245,7 +259,7 @@ function PermissionModePicker() {
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
 
             <button
-              onClick={() => { setPermissionMode('ask'); setOpen(false) }}
+              onClick={() => handleSetMode('ask')}
               className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
               style={{
                 color: permissionMode === 'ask' ? colors.textPrimary : colors.textSecondary,
@@ -262,7 +276,7 @@ function PermissionModePicker() {
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
 
             <button
-              onClick={() => { setPermissionMode('acceptEdits'); setOpen(false) }}
+              onClick={() => handleSetMode('acceptEdits')}
               className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
               style={{
                 color: isAcceptEdits ? colors.textPrimary : colors.textSecondary,
@@ -279,7 +293,7 @@ function PermissionModePicker() {
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
 
             <button
-              onClick={() => { setPermissionMode('auto'); setOpen(false) }}
+              onClick={() => handleSetMode('auto')}
               className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
               style={{
                 color: isAuto ? colors.textPrimary : colors.textSecondary,
@@ -296,7 +310,7 @@ function PermissionModePicker() {
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
 
             <button
-              onClick={() => { setPermissionMode('dontAsk'); setOpen(false) }}
+              onClick={() => handleSetMode('dontAsk')}
               className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
               style={{
                 color: isDontAsk ? '#e57c23' : colors.textSecondary,
@@ -313,7 +327,7 @@ function PermissionModePicker() {
             <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
 
             <button
-              onClick={() => { setPermissionMode('bypass'); setOpen(false) }}
+              onClick={() => handleSetMode('bypass')}
               className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
               style={{
                 color: isBypass ? '#e57c23' : colors.textSecondary,
@@ -345,8 +359,14 @@ const EFFORT_OPTIONS: Array<{ label: string; value: number | null; weight: IconW
 ]
 
 function EffortPicker() {
-  const effortLevel = useSessionStore((s) => s.effortLevel)
+  const globalEffortLevel = useSessionStore((s) => s.effortLevel)
   const setEffortLevel = useSessionStore((s) => s.setEffortLevel)
+  const setTabEffortLevel = useSessionStore((s) => s.setTabEffortLevel)
+  const tab = useSessionStore(
+    (s) => s.tabs.find((t) => t.id === s.activeTabId),
+    (a, b) => a === b || (!!a && !!b && a.tabEffortLevel === b.tabEffortLevel),
+  )
+  const effortLevel = tab?.tabEffortLevel !== undefined && tab?.tabEffortLevel !== null ? tab.tabEffortLevel : globalEffortLevel
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
@@ -432,7 +452,7 @@ function EffortPicker() {
                     <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
                   )}
                   <button
-                    onClick={() => { setEffortLevel(opt.value); setOpen(false) }}
+                    onClick={() => { if (tab) setTabEffortLevel(tab.id, opt.value); else setEffortLevel(opt.value); setOpen(false) }}
                     className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
                     style={{
                       color: isSelected ? colors.textPrimary : colors.textSecondary,
@@ -592,10 +612,10 @@ export function StatusBar() {
               {/* Base directory */}
               <div className="px-2 py-1">
                 <div className="text-[9px] uppercase tracking-wider mb-1" style={{ color: colors.textTertiary }}>
-                  Base directory
+                  {t('status.dir.base')}
                 </div>
-                <div className="text-[11px] truncate" style={{ color: tab.hasChosenDirectory ? colors.textSecondary : colors.textMuted }} title={tab.hasChosenDirectory ? tab.workingDirectory : 'No folder selected — defaults to claude-default'}>
-                  {tab.hasChosenDirectory ? tab.workingDirectory : 'None (defaults to claude-default)'}
+                <div className="text-[11px] truncate" style={{ color: tab.hasChosenDirectory ? colors.textSecondary : colors.textMuted }} title={tab.hasChosenDirectory ? tab.workingDirectory : t('status.dir.none')}>
+                  {tab.hasChosenDirectory ? tab.workingDirectory : t('status.dir.none')}
                 </div>
               </div>
 
@@ -628,20 +648,26 @@ export function StatusBar() {
 
       {/* Right — context % + CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        {tab.lastResult?.usage?.input_tokens && tab.lastResult.usage.input_tokens > 0 && (() => {
+        {(() => {
+          const inputTokens = tab.lastResult?.usage?.input_tokens ?? 0
           const contextLimit = 200_000
-          const pct = Math.min(100, Math.round((tab.lastResult!.usage.input_tokens! / contextLimit) * 100))
-          const color = pct >= 80 ? '#ef4444' : pct >= 60 ? '#f59e0b' : colors.textTertiary
+          const pct = Math.min(100, Math.round((inputTokens / contextLimit) * 100))
+          const color = pct >= 80 ? colors.contextHigh
+            : pct >= 60 ? colors.contextMedium
+            : colors.contextLow
+          const tooltipText = inputTokens > 0
+            ? `${t('status.context')}: ${pct}% (${formatTokenCount(inputTokens)} / ${formatTokenCount(contextLimit)} tokens)`
+            : `${t('status.context')}: 0% — ${t('status.context.empty')}`
           return (
             <span
               className="text-[10px] tabular-nums flex items-center gap-1"
-              style={{ color, opacity: pct >= 60 ? 1 : 0.7 }}
-              title={`${t('status.context')}: ${formatTokenCount(tab.lastResult!.usage.input_tokens!)} / ${formatTokenCount(contextLimit)} tokens (${pct}%)`}
+              style={{ color, opacity: pct >= 60 ? 1 : 0.6 }}
+              title={tooltipText}
             >
               {!compact && <span className="text-[9px]" style={{ opacity: 0.8 }}>{t('status.context')}</span>}
               <span style={{
                 display: 'inline-block', width: 24, height: 4, borderRadius: 2,
-                background: `${color}22`, overflow: 'hidden', position: 'relative',
+                background: colors.contextTrack, overflow: 'hidden', position: 'relative',
               }}>
                 <span style={{
                   position: 'absolute', left: 0, top: 0, height: '100%',

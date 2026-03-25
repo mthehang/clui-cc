@@ -33,6 +33,10 @@ export interface CluiAPI {
   listInstalledPlugins(): Promise<string[]>
   installPlugin(repo: string, pluginName: string, marketplace: string, sourcePath?: string, isSkillMd?: boolean): Promise<{ ok: boolean; error?: string }>
   uninstallPlugin(pluginName: string): Promise<{ ok: boolean; error?: string }>
+  executeCliCommand(command: string): Promise<{ ok: boolean; output: string }>
+  addMarketplaceSource(repo: string): Promise<{ ok: boolean; error?: string }>
+  removeMarketplaceSource(repo: string): Promise<{ ok: boolean; error?: string }>
+  listMarketplaceSources(): Promise<Array<{ repo: string; category: string }>>
   getSettings(): Promise<AppSettings>
   saveSettings(settings: Partial<AppSettings>): void
   readGlobalRules(): Promise<string>
@@ -115,6 +119,14 @@ const api: CluiAPI = {
     ipcRenderer.invoke(IPC.MARKETPLACE_INSTALL, { repo, pluginName, marketplace, sourcePath, isSkillMd }),
   uninstallPlugin: (pluginName) =>
     ipcRenderer.invoke(IPC.MARKETPLACE_UNINSTALL, { pluginName }),
+  executeCliCommand: (command: string) =>
+    ipcRenderer.invoke(IPC.CLI_EXECUTE, { command }),
+  addMarketplaceSource: (repo: string) =>
+    ipcRenderer.invoke(IPC.MARKETPLACE_ADD_SOURCE, { repo }),
+  removeMarketplaceSource: (repo: string) =>
+    ipcRenderer.invoke(IPC.MARKETPLACE_REMOVE_SOURCE, { repo }),
+  listMarketplaceSources: () =>
+    ipcRenderer.invoke(IPC.MARKETPLACE_LIST_SOURCES),
   getSettings: () => ipcRenderer.invoke(IPC.GET_SETTINGS),
   saveSettings: (settings) => ipcRenderer.send(IPC.SAVE_SETTINGS, settings),
   readGlobalRules: () => ipcRenderer.invoke(IPC.READ_GLOBAL_RULES),

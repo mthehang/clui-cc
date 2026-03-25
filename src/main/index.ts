@@ -1885,6 +1885,45 @@ ipcMain.handle(IPC.MARKETPLACE_UNINSTALL, async (_event, { pluginName }: { plugi
   return uninstallPlugin(pluginName)
 })
 
+// ─── CLI Passthrough ───
+
+ipcMain.handle(IPC.CLI_EXECUTE, async (_event, { command }: { command: string }) => {
+  log(`IPC CLI_EXECUTE: ${command}`)
+  try {
+    const claudePath = findClaudeBinary()
+    const args = command.split(/\s+/)
+    const execFileAsync = promisify(execFile)
+    const { stdout, stderr } = await execFileAsync(claudePath, args, {
+      timeout: 30_000,
+      env: { ...process.env, FORCE_COLOR: '0' },
+    })
+    return { ok: true, output: stdout || stderr || 'Command completed.' }
+  } catch (err: any) {
+    const output = err.stdout || err.stderr || err.message || 'Command failed.'
+    return { ok: false, output }
+  }
+})
+
+// ─── Marketplace Custom Sources ───
+
+ipcMain.handle(IPC.MARKETPLACE_ADD_SOURCE, async (_event, { repo }: { repo: string }) => {
+  log(`IPC MARKETPLACE_ADD_SOURCE: ${repo}`)
+  const { addCustomSource } = await import('./marketplace/catalog')
+  return addCustomSource(repo)
+})
+
+ipcMain.handle(IPC.MARKETPLACE_REMOVE_SOURCE, async (_event, { repo }: { repo: string }) => {
+  log(`IPC MARKETPLACE_REMOVE_SOURCE: ${repo}`)
+  const { removeCustomSource } = await import('./marketplace/catalog')
+  return removeCustomSource(repo)
+})
+
+ipcMain.handle(IPC.MARKETPLACE_LIST_SOURCES, async () => {
+  log('IPC MARKETPLACE_LIST_SOURCES')
+  const { listCustomSources } = await import('./marketplace/catalog')
+  return listCustomSources()
+})
+
 // ─── Theme Detection ───
 
 ipcMain.handle(IPC.GET_THEME, () => {

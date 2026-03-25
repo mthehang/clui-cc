@@ -143,9 +143,9 @@ export function InlineDiff({ toolInput }: { toolInput: string }) {
   const lineStyle = (type: DiffLine['type']): React.CSSProperties => {
     switch (type) {
       case 'added':
-        return { backgroundColor: 'rgba(74, 222, 128, 0.1)', color: '#4ade80' }
+        return { backgroundColor: colors.diffAddedBg, color: colors.diffAdded }
       case 'removed':
-        return { backgroundColor: 'rgba(248, 113, 113, 0.1)', color: '#f87171' }
+        return { backgroundColor: colors.diffRemovedBg, color: colors.diffRemoved }
       case 'context':
         return { backgroundColor: 'transparent', color: colors.textSecondary }
     }
@@ -186,11 +186,11 @@ export function InlineDiff({ toolInput }: { toolInput: string }) {
           borderBottom: `1px solid ${colors.containerBorder}`,
         }}
       >
-        {addedCount > 0 && <span style={{ color: '#4ade80' }}>+{addedCount} added</span>}
+        {addedCount > 0 && <span style={{ color: colors.diffAdded }}>+{addedCount} added</span>}
         {addedCount > 0 && removedCount > 0 && (
           <span style={{ color: colors.textMuted }}>/</span>
         )}
-        {removedCount > 0 && <span style={{ color: '#f87171' }}>-{removedCount} removed</span>}
+        {removedCount > 0 && <span style={{ color: colors.diffRemoved }}>-{removedCount} removed</span>}
       </div>
 
       {/* Diff lines */}

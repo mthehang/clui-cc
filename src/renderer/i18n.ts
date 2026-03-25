@@ -56,9 +56,13 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     // ─── Status Bar ───
     'status.dir.choose': 'Using home directory by default — click to choose a folder',
     'status.dir.add': 'Add directory...',
+    'status.dir.change': 'Change directory',
+    'status.dir.base': 'Base directory',
+    'status.dir.none': 'None (defaults to claude-default)',
     'status.terminal': 'Open in CLI',
     'status.terminal.title': 'Open this session in Terminal',
-    'status.context': 'Context window',
+    'status.context': 'Context',
+    'status.context.empty': 'No messages sent yet',
 
     // ─── Settings ───
     'settings.title': 'Settings',
@@ -232,9 +236,13 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     // ─── Barra de Status ───
     'status.dir.choose': 'Usando diretório padrão — clique para escolher uma pasta',
     'status.dir.add': 'Adicionar diretório...',
+    'status.dir.change': 'Alterar diretório',
+    'status.dir.base': 'Diretório base',
+    'status.dir.none': 'Nenhum (usa claude-default)',
     'status.terminal': 'Abrir no CLI',
     'status.terminal.title': 'Abrir esta sessão no Terminal',
-    'status.context': 'Janela de contexto',
+    'status.context': 'Contexto',
+    'status.context.empty': 'Nenhuma mensagem enviada ainda',
 
     // ─── Configurações ───
     'settings.title': 'Configurações',

@@ -170,6 +170,14 @@ export interface TabState {
   workingDirectory: string
   /** Whether the user explicitly chose a directory (vs. using default home) */
   hasChosenDirectory: boolean
+  /** Per-tab preferred model override (null = use global default) */
+  tabModel: string | null
+  /** Per-tab permission mode override (null = use global default) */
+  tabPermissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass' | null
+  /** Per-tab effort level override (null = use global default) */
+  tabEffortLevel: number | null
+  /** Per-tab thinking enabled override (null = use global default) */
+  tabThinkingEnabled: boolean | null
 }
 
 export interface Message {
@@ -406,6 +414,14 @@ export const IPC = {
   MARKETPLACE_INSTALLED: 'clui:marketplace-installed',
   MARKETPLACE_INSTALL: 'clui:marketplace-install',
   MARKETPLACE_UNINSTALL: 'clui:marketplace-uninstall',
+
+  // CLI passthrough
+  CLI_EXECUTE: 'clui:cli-execute',
+
+  // Marketplace custom sources
+  MARKETPLACE_ADD_SOURCE: 'clui:marketplace-add-source',
+  MARKETPLACE_REMOVE_SOURCE: 'clui:marketplace-remove-source',
+  MARKETPLACE_LIST_SOURCES: 'clui:marketplace-list-sources',
 
   // Permission mode
   SET_PERMISSION_MODE: 'clui:set-permission-mode',

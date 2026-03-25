@@ -115,6 +115,11 @@ interface State {
   addSystemMessage: (content: string) => void
   sendMessage: (prompt: string, projectPath?: string) => void
   respondPermission: (tabId: string, questionId: string, optionId: string) => void
+  setTabModel: (tabId: string, model: string | null) => void
+  setTabPermissionMode: (tabId: string, mode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass' | null) => void
+  setTabEffortLevel: (tabId: string, level: number | null) => void
+  setTabThinkingEnabled: (tabId: string, enabled: boolean | null) => void
+  getActiveTabConfig: () => { model: string | null; permissionMode: string; effortLevel: number | null; thinkingEnabled: boolean }
   changeDirectory: (dir: string) => void
   addAttachments: (attachments: Attachment[]) => void
   removeAttachment: (attachmentId: string) => void
@@ -165,6 +170,10 @@ function makeLocalTab(): TabState {
     queuedPrompts: [],
     workingDirectory: '~',
     hasChosenDirectory: false,
+    tabModel: null,
+    tabPermissionMode: null,
+    tabEffortLevel: null,
+    tabThinkingEnabled: null,
   }
 }
 
@@ -565,6 +574,30 @@ export const useSessionStore = create<State>((set, get) => ({
 
   // ─── Directory management ───
 
+  setTabModel: (tabId, model) => {
+    set((s) => ({ tabs: s.tabs.map((t) => t.id === tabId ? { ...t, tabModel: model } : t) }))
+  },
+  setTabPermissionMode: (tabId, mode) => {
+    set((s) => ({ tabs: s.tabs.map((t) => t.id === tabId ? { ...t, tabPermissionMode: mode } : t) }))
+    // If setting per-tab, also push to backend for the active session
+    if (mode) window.clui.setPermissionMode(mode)
+  },
+  setTabEffortLevel: (tabId, level) => {
+    set((s) => ({ tabs: s.tabs.map((t) => t.id === tabId ? { ...t, tabEffortLevel: level } : t) }))
+  },
+  setTabThinkingEnabled: (tabId, enabled) => {
+    set((s) => ({ tabs: s.tabs.map((t) => t.id === tabId ? { ...t, tabThinkingEnabled: enabled } : t) }))
+  },
+  getActiveTabConfig: () => {
+    const s = get()
+    const tab = s.tabs.find((t) => t.id === s.activeTabId)
+    return {
+      model: tab?.tabModel ?? s.preferredModel,
+      permissionMode: tab?.tabPermissionMode ?? s.permissionMode,
+      effortLevel: tab?.tabEffortLevel !== undefined ? tab.tabEffortLevel : s.effortLevel,
+      thinkingEnabled: tab?.tabThinkingEnabled ?? s.thinkingEnabled,
+    }
+  },
   changeDirectory: (dir) => {
     const { activeTabId } = get()
     window.clui.resetTabSession(activeTabId)

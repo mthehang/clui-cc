@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import {
   Trash, Cpu, CurrencyDollar, Question, HardDrives, Sparkle,
   GearSix, ArrowsInSimple, Notepad, Info, ShieldCheck, FilePlus,
-  SignIn, SignOut, Stethoscope, Bug,
+  SignIn, SignOut, Stethoscope, Bug, Storefront, Palette, TerminalWindow,
 } from '@phosphor-icons/react'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
@@ -34,6 +34,9 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { command: '/logout', description: 'Sign out', i18nKey: 'cmd.logout', icon: <SignOut size={13} /> },
   { command: '/doctor', description: 'Run diagnostics', i18nKey: 'cmd.doctor', icon: <Stethoscope size={13} /> },
   { command: '/bug', description: 'Report a bug', i18nKey: 'cmd.bug', icon: <Bug size={13} /> },
+  { command: '/plugin', description: 'Open plugin marketplace', icon: <Storefront size={13} /> },
+  { command: '/marketplace', description: 'Open plugin marketplace', icon: <Storefront size={13} /> },
+  { command: '/theme', description: 'Toggle theme (dark/light/system)', icon: <Palette size={13} /> },
 ]
 
 interface Props {
