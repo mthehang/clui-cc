@@ -716,39 +716,21 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
 
       {status.state === 'available' && (
         <div className="flex flex-col gap-1">
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>v{status.version} available</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>v{status.version} {t('settings.update.availableSuffix', 'available')}</span>
           <button
             onClick={() => window.clui.downloadUpdate()}
             className="text-[11px] px-2 py-1 rounded-lg"
             style={{ background: colors.accent, color: '#fff', cursor: 'pointer' }}
           >
-            {t('settings.update.download')}
+            {t('settings.update.openDownload', 'Open Download Page')}
           </button>
-        </div>
-      )}
-
-      {status.state === 'downloading' && (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-1.5">
-            <CircleNotch size={12} className="animate-spin" style={{ color: colors.accent }} />
-            <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.downloading')} {Math.round(status.percent)}%</span>
-          </div>
-          <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: colors.surfaceSecondary }}>
-            <div className="h-full rounded-full transition-all" style={{ width: `${status.percent}%`, background: colors.accent }} />
-          </div>
         </div>
       )}
 
       {status.state === 'downloaded' && (
         <div className="flex flex-col gap-1">
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>v{status.version} ready to install</span>
-          <button
-            onClick={() => window.clui.installUpdate()}
-            className="text-[11px] px-2 py-1 rounded-lg"
-            style={{ background: colors.accent, color: '#fff', cursor: 'pointer' }}
-          >
-            {t('settings.update.install')}
-          </button>
+          <CheckCircle size={12} weight="fill" style={{ color: colors.accent }} />
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.opened', 'Download page opened in browser')}</span>
         </div>
       )}
 

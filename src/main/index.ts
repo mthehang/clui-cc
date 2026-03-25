@@ -225,9 +225,7 @@ function createWindow(): void {
   }
 
   // Initialize auto-updater (only in packaged builds)
-  if (app.isPackaged) {
-    initAutoUpdater(mainWindow)
-  }
+  initAutoUpdater(mainWindow)
 }
 
 function showWindow(source = 'unknown'): void {
