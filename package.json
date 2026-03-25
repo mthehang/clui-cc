@@ -33,6 +33,7 @@
     "zustand": "^5.0.0"
   },
   "build": {
+    "npmRebuild": false,
     "appId": "com.clui.app",
     "publish": {
       "provider": "github",
@@ -49,7 +50,10 @@
       "dist/preload/**/*",
       "dist/renderer/**/*",
       "resources/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/node-pty/prebuilds/**/*",
+      "node_modules/node-pty/lib/**/*",
+      "node_modules/node-pty/package.json"
     ],
     "mac": {
       "icon": "resources/icon.icns",
