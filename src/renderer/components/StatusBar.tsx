@@ -351,7 +351,7 @@ function PermissionModePicker() {
 /* ─── Effort Picker (thinking budget) ─── */
 
 const EFFORT_OPTIONS: Array<{ label: string; value: number | null; weight: IconWeight }> = [
-  { label: 'Default', value: null, weight: 'thin' },
+  { label: 'Auto', value: null, weight: 'thin' },
   { label: 'Low', value: 4096, weight: 'light' },
   { label: 'Medium', value: 8192, weight: 'regular' },
   { label: 'High', value: 16384, weight: 'bold' },
@@ -457,6 +457,7 @@ function EffortPicker() {
                     style={{
                       color: isSelected ? colors.textPrimary : colors.textSecondary,
                       fontWeight: isSelected ? 600 : 400,
+                      cursor: 'pointer',
                     }}
                   >
                     <span className="flex items-center gap-1.5">
