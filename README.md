@@ -1,19 +1,21 @@
 # Clui CC — Command Line User Interface for Claude Code
 
-A lightweight, transparent desktop overlay for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on **Windows**. Clui CC wraps the Claude Code CLI in a floating pill interface with multi-tab sessions, a permission approval UI, voice input, remote control, auto-updates, and a skills marketplace.
+A lightweight, transparent desktop overlay for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on **Windows**. Clui CC wraps the Claude Code CLI in a floating pill interface with multi-tab sessions, a permission approval UI, voice input, AI prompt enhancement, auto-updates, and a skills marketplace.
 
 > Fork of [lcoutodemos/clui-cc](https://github.com/lcoutodemos/clui-cc) with full Windows support and additional features.
 
 ## Features
 
 - **Floating overlay** — transparent, click-through window that stays on top. Toggle with `Alt+Space` (fallback: `Ctrl+Shift+K`).
-- **Multi-tab sessions** — each tab spawns its own `claude -p` process with independent session state.
+- **Multi-tab sessions** — each tab spawns its own `claude -p` process with independent session state, model, effort level, and thinking mode.
 - **Permission approval UI** — intercepts tool calls via PreToolUse HTTP hooks so you can review and approve/deny from the UI.
+- **AI prompt enhancement** — local Ollama integration (Qwen3, Llama 3.2) to rewrite your messages before sending. Sparkle button in the input bar.
+- **Per-tab brain mode** — enable/disable extended thinking per tab. When brain is OFF, the effort picker is hidden automatically.
 - **Remote control** — per-tab toggle for Claude Code's `--rc` flag, enabling session sharing across devices. Visual indicator on tab strip.
 - **Auto-updates** — checks GitHub Releases for new versions. Download and install from Settings.
 - **Usage tracking** — real-time cost and token usage breakdown by model.
 - **Inline diff viewer** — file changes from tool results displayed as readable diffs.
-- **Conversation history** — browse and resume past Claude Code sessions.
+- **Conversation history** — browse and resume past Claude Code sessions (current project or all projects).
 - **Skills marketplace** — install plugins from Anthropic's GitHub repos without leaving Clui CC.
 - **Voice input** — local speech-to-text via Whisper with language selection.
 - **File & screenshot attachments** — paste images or attach files directly.
@@ -49,6 +51,7 @@ irm https://raw.githubusercontent.com/mthehang/clui-cc/main/scripts/install.ps1 
 - **Node.js** 20+ — [nodejs.org](https://nodejs.org)
 - **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code` (must be authenticated)
 - **Whisper** (optional, for voice) — `winget install ggerganov.whisper.cpp` or download from [GitHub](https://github.com/ggerganov/whisper.cpp/releases)
+- **Ollama** (optional, for prompt enhancement) — [ollama.com](https://ollama.com). Pull `qwen3:1.7b` or `llama3.2:3b` after installing.
 
 ## Developer Workflow
 
@@ -90,8 +93,9 @@ src/
 │   ├── claude/             # ControlPlane, RunManager, EventNormalizer
 │   ├── hooks/              # PermissionServer (PreToolUse HTTP hooks)
 │   ├── marketplace/        # Plugin catalog fetching + install
+│   ├── ollama/             # Ollama service (prompt enhancement)
 │   ├── skills/             # Skill auto-installer
-│   ├── updater.ts          # Auto-update via electron-updater
+│   ├── updater.ts          # Auto-update via GitHub API
 │   └── index.ts            # Window creation, IPC handlers, tray
 ├── renderer/               # React frontend
 │   ├── components/         # TabStrip, ConversationView, InputBar, etc.
