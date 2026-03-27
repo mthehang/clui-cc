@@ -14,6 +14,7 @@ import { IS_MAC, IS_WIN, isAbsolutePath, getIconPath, encodeProjectPath, findBin
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError, AppSettings, CloudUsageResponse, UsageBarData } from '../shared/types'
 import { initAutoUpdater, checkForUpdate, downloadUpdate, installUpdate } from './updater'
+import { OllamaService } from './ollama/ollama-service'
 
 // Windows: disable hardware acceleration entirely to prevent system freeze on startup.
 // transparent: true + DWM layered window composition causes DXGI to stall the GPU pipeline.
@@ -37,6 +38,7 @@ let toggleSequence = 0
 const INTERACTIVE_PTY = process.env.CLUI_INTERACTIVE_PERMISSIONS_PTY === '1'
 
 const controlPlane = new ControlPlane(INTERACTIVE_PTY)
+const ollamaService = new OllamaService()
 
 // ─── Settings Persistence ───
 
@@ -58,10 +60,16 @@ const DEFAULT_SETTINGS: AppSettings = {
   whisperLanguage: 'auto',
   whisperDevice: 'auto',
   appLanguage: 'en',
-  windowMarginTop: 0,
-  windowMarginBottom: 0,
-  windowMarginLeft: 0,
-  windowMarginRight: 0,
+  uiOffsetY: 0,
+  uiOffsetX: 0,
+  maxTurns: 25,
+  warmupEnabled: false,
+  systemHintEnabled: true,
+  autoCompactThreshold: 80,
+  maxBudgetUsd: null,
+  ollamaEnabled: false,
+  ollamaModel: 'qwen3:1.7b',
+  ollamaEndpoint: 'http://localhost:11434',
 }
 
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
@@ -152,16 +160,13 @@ function createWindow(): void {
   const cursor = screen.getCursorScreenPoint()
   const display = screen.getDisplayNearestPoint(cursor)
   const { x, y, width, height } = display.workArea
-  const mt = currentSettings.windowMarginTop || 0
-  const mb = currentSettings.windowMarginBottom || 0
-  const ml = currentSettings.windowMarginLeft || 0
-  const mr = currentSettings.windowMarginRight || 0
 
+  // Margins are handled via CSS padding in the renderer — native window is always full-screen.
   mainWindow = new BrowserWindow({
-    width: width - ml - mr,
-    height: height - 1 - mt - mb,
-    x: x + ml,
-    y: y + mt,
+    width,
+    height: height - 1,
+    x,
+    y,
     ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),  // NSPanel — non-activating, joins all spaces
     frame: false,
     ...(IS_MAC ? { titleBarStyle: 'hidden' as const } : {}),
@@ -232,29 +237,19 @@ function showWindow(source = 'unknown'): void {
   if (!mainWindow) return
   const toggleId = ++toggleSequence
 
-  // Position on the display where the cursor currently is (not always primary)
-  const cursor = screen.getCursorScreenPoint()
-  const display = screen.getDisplayNearestPoint(cursor)
-  const { x: dx, y: dy, width: dw, height: dh } = display.workArea
-  const mt = currentSettings.windowMarginTop || 0
-  const mb = currentSettings.windowMarginBottom || 0
-  const ml = currentSettings.windowMarginLeft || 0
-  const mr = currentSettings.windowMarginRight || 0
-  mainWindow.setBounds({ x: dx + ml, y: dy + mt, width: dw - ml - mr, height: dh - 1 - mt - mb })
-
-  // Always re-assert space membership — the flag can be lost after hide/show cycles
-  // and must be set before show() so the window joins the active Space, not its
-  // last-known Space.
+  // Do NOT call setBounds here. The native window is a fixed transparent overlay —
+  // its position is set once in createWindow() and only updated when display config
+  // changes (see screen event handlers below). Calling setBounds on every show causes
+  // DPI rounding drift on Windows that visibly shifts the content each cycle.
   if (IS_MAC) {
+    // Re-assert space membership — can be lost after hide/show cycles.
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   }
 
   if (SPACES_DEBUG) {
-    log(`[spaces] showWindow#${toggleId} source=${source} move-to-display id=${display.id}`)
+    log(`[spaces] showWindow#${toggleId} source=${source}`)
     snapshotWindowState(`showWindow#${toggleId} pre-show`)
   }
-  // As an accessory app (app.dock.hide), show() + focus gives keyboard
-  // without deactivating the active app — hover preserved everywhere.
   mainWindow.show()
   mainWindow.webContents.focus()
   broadcast(IPC.WINDOW_SHOWN)
@@ -289,6 +284,7 @@ ipcMain.on(IPC.RESIZE_HEIGHT, () => {
 ipcMain.on(IPC.SET_WINDOW_WIDTH, () => {
   // No-op — native width is fixed to keep expand/collapse animation smooth.
 })
+
 
 ipcMain.handle(IPC.ANIMATE_HEIGHT, () => {
   // No-op — kept for API compat, animation handled purely in renderer
@@ -356,7 +352,11 @@ ipcMain.handle(IPC.CREATE_TAB, () => {
 
 ipcMain.on(IPC.INIT_SESSION, (_event, tabId: string) => {
   log(`IPC INIT_SESSION: ${tabId}`)
-  controlPlane.initSession(tabId)
+  if (currentSettings.warmupEnabled) {
+    controlPlane.initSession(tabId)
+  } else {
+    log(`IPC INIT_SESSION: warmup disabled, skipping for tab ${tabId}`)
+  }
 })
 
 ipcMain.on(IPC.RESET_TAB_SESSION, (_event, tabId: string) => {
@@ -757,7 +757,9 @@ ipcMain.handle(IPC.RESPOND_PERMISSION, (_event, { tabId, questionId, optionId }:
 ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   log(`IPC LIST_SESSIONS ${projectPath ? `(path=${projectPath})` : ''}`)
   try {
-    const cwd = projectPath || process.cwd()
+    const cwd = projectPath
+      ? projectPath.replace(/^~/, homedir())
+      : process.cwd()
     // Validate projectPath — reject null bytes, newlines, non-absolute paths
     if (/[\0\r\n]/.test(cwd) || !isAbsolutePath(cwd)) {
       log(`LIST_SESSIONS: rejected invalid projectPath: ${cwd}`)
@@ -772,7 +774,7 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
     }
     const files = readdirSync(sessionsDir).filter((f: string) => f.endsWith('.jsonl'))
 
-    const sessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number }> = []
+    const sessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number; encodedPath: string }> = []
 
     // UUID v4 regex — only consider files named as valid UUIDs
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -804,11 +806,16 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
             if (obj.timestamp) meta.lastTimestamp = obj.timestamp
             if (obj.type === 'user' && !meta.firstMessage) {
               const content = obj.message?.content
+              let text: string | null = null
               if (typeof content === 'string') {
-                meta.firstMessage = content.substring(0, 100)
+                text = content.substring(0, 100)
               } else if (Array.isArray(content)) {
                 const textPart = content.find((p: any) => p.type === 'text')
-                meta.firstMessage = textPart?.text?.substring(0, 100) || null
+                text = textPart?.text?.substring(0, 100) || null
+              }
+              // Skip CLUI internal warmup prompts
+              if (text && text.trim() !== '.' && text.trim().toLowerCase() !== 'hi') {
+                meta.firstMessage = text
               }
             }
           } catch {}
@@ -824,6 +831,7 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
           firstMessage: meta.firstMessage,
           lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
           size: stat.size,
+          encodedPath,
         })
       }
     }
@@ -845,19 +853,27 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
     if (!existsSync(projectsRoot)) return []
 
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    const allSessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number; projectPath: string }> = []
+    const allSessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number; projectPath: string; encodedPath: string }> = []
 
-    // Decode encoded project path back to original path
+    // Decode encoded project path back to original path.
+    // This must be the exact inverse of encodeProjectPath() in platform.ts.
+    // encodeProjectPath on Windows: C:\Users\me\my-project → C-Users-me-my--project
+    // (colons and backslashes → dashes; dashes in path segments → double-dash)
+    // For now, we use the simpler encoding where dashes replace separators:
+    //   Windows: C-Users-me-my-project → C:\Users\me\my-project
+    //            First letter before first dash is the drive letter.
+    // NOTE: path segments with dashes in their name are ambiguous with this encoding.
+    // We accept this limitation — it only affects `projectPath` display, not session loading.
     const decodeProjectPath = (encoded: string): string => {
       if (IS_WIN) {
         // C-Users-me-project → C:\Users\me\project
-        // First dash after single letter is the colon
-        const match = encoded.match(/^([A-Za-z])-(.*)$/)
+        const match = encoded.match(/^([A-Za-z])-(.+)$/)
         if (match) {
-          return match[1] + ':\\' + match[2].replace(/-/g, '\\')
+          return match[1].toUpperCase() + ':\\' + match[2].replace(/-/g, '\\')
         }
-        return encoded.replace(/-/g, '\\')
+        return encoded
       }
+      // macOS/Linux: -Users-me-project → /Users/me/project
       return '/' + encoded.replace(/-/g, '/')
     }
 
@@ -918,6 +934,7 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
             lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
             size: stat.size,
             projectPath: originalPath,
+            encodedPath: projDir.name,
           })
         }
       }
@@ -932,10 +949,11 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
 })
 
 // Load conversation history from a session's JSONL file
-ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPath?: string } | string) => {
+ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPath?: string; encodedPath?: string } | string) => {
   const sessionId = typeof arg === 'string' ? arg : arg.sessionId
   const projectPath = typeof arg === 'string' ? undefined : arg.projectPath
-  log(`IPC LOAD_SESSION ${sessionId}${projectPath ? ` (path=${projectPath})` : ''}`)
+  const encodedPathArg = typeof arg === 'string' ? undefined : arg.encodedPath
+  log(`IPC LOAD_SESSION ${sessionId}${encodedPathArg ? ` (encodedPath=${encodedPathArg})` : projectPath ? ` (path=${projectPath})` : ''}`)
 
   // Validate sessionId — must be strict UUID to prevent path traversal via crafted filenames
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -945,13 +963,25 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
   }
 
   try {
-    const cwd = projectPath || process.cwd()
-    // Validate projectPath — reject null bytes, newlines, non-absolute paths
-    if (/[\0\r\n]/.test(cwd) || !isAbsolutePath(cwd)) {
-      log(`LOAD_SESSION: rejected invalid projectPath: ${cwd}`)
-      return []
+    let encodedPath: string
+    if (encodedPathArg) {
+      // Use the raw encoded folder name directly — avoids lossy decode→encode round-trip
+      // Validate: only allow safe characters (alphanumeric, dash, dot, underscore)
+      if (!/^[a-zA-Z0-9._\-]+$/.test(encodedPathArg)) {
+        log(`LOAD_SESSION: rejected invalid encodedPath: ${encodedPathArg}`)
+        return []
+      }
+      encodedPath = encodedPathArg
+    } else {
+      const rawCwd = projectPath || process.cwd()
+      const cwd = rawCwd.replace(/^~/, homedir())
+      // Validate projectPath — reject null bytes, newlines, non-absolute paths
+      if (/[\0\r\n]/.test(cwd) || !isAbsolutePath(cwd)) {
+        log(`LOAD_SESSION: rejected invalid projectPath: ${cwd}`)
+        return []
+      }
+      encodedPath = encodeProjectPath(cwd)
     }
-    const encodedPath = encodeProjectPath(cwd)
     const filePath = join(homedir(), '.claude', 'projects', encodedPath, `${sessionId}.jsonl`)
     if (!existsSync(filePath)) return []
 
@@ -972,7 +1002,8 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
                 .map((b: any) => b.text)
                 .join('\n')
             }
-            if (text) {
+            // Skip CLUI internal warmup prompts ('.' or 'hi') from the display
+            if (text && text.trim() !== '.' && text.trim().toLowerCase() !== 'hi') {
               messages.push({ role: 'user', content: text, timestamp: new Date(obj.timestamp).getTime() })
             }
           } else if (obj.type === 'assistant') {
@@ -1032,7 +1063,7 @@ ipcMain.handle(IPC.SELECT_DIRECTORY, async () => {
   // Unparented avoids modal dimming on the transparent overlay.
   // Activation is fine here — user is actively interacting with CLUI.
   if (process.platform === 'darwin') app.focus()
-  const options = { properties: ['openDirectory'] as const }
+  const options: any = { properties: ['openDirectory'] }
   const result = process.platform === 'darwin'
     ? await dialog.showOpenDialog(options)
     : await dialog.showOpenDialog(mainWindow, options)
@@ -1056,7 +1087,7 @@ ipcMain.handle(IPC.ATTACH_FILES, async () => {
   if (!mainWindow) return null
   // macOS: activate app so unparented dialog appears on top
   if (process.platform === 'darwin') app.focus()
-  const options = {
+  const options: any = {
     properties: ['openFile', 'multiSelections'],
     filters: [
       { name: 'All Files', extensions: ['*'] },
@@ -1968,6 +1999,53 @@ async function requestPermissions(): Promise<void> {
   // "bypass private window picker" dialog. Let the OS prompt naturally if/when
   // the screenshot feature is actually used.
 }
+
+// ─── Ollama Prompt Enhancer ───
+
+ipcMain.handle(IPC.OLLAMA_CHECK, async () => {
+  ollamaService.setEndpoint(currentSettings.ollamaEndpoint || 'http://localhost:11434')
+  return ollamaService.isRunning()
+})
+
+ipcMain.handle(IPC.OLLAMA_LIST_MODELS, async () => {
+  ollamaService.setEndpoint(currentSettings.ollamaEndpoint || 'http://localhost:11434')
+  const installed = await ollamaService.listModels()
+  return { installed }
+})
+
+ipcMain.handle(IPC.OLLAMA_ENHANCE_PROMPT, async (_event, { model, prompt }: { model: string; prompt: string }) => {
+  ollamaService.setEndpoint(currentSettings.ollamaEndpoint || 'http://localhost:11434')
+  try {
+    return await ollamaService.enhancePrompt(model, prompt)
+  } catch (err: any) {
+    log(`OLLAMA_ENHANCE_PROMPT error: ${err.message}`)
+    return { error: err.message }
+  }
+})
+
+ipcMain.handle(IPC.OLLAMA_PULL_MODEL, async (_event, { model }: { model: string }) => {
+  ollamaService.setEndpoint(currentSettings.ollamaEndpoint || 'http://localhost:11434')
+  try {
+    await ollamaService.pullModel(model, (percent, status) => {
+      broadcast(IPC.OLLAMA_PULL_PROGRESS, model, percent, status)
+    })
+    return { ok: true }
+  } catch (err: any) {
+    log(`OLLAMA_PULL_MODEL error: ${err.message}`)
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle(IPC.OLLAMA_DELETE_MODEL, async (_event, { model }: { model: string }) => {
+  ollamaService.setEndpoint(currentSettings.ollamaEndpoint || 'http://localhost:11434')
+  try {
+    await ollamaService.deleteModel(model)
+    return { ok: true }
+  } catch (err: any) {
+    log(`OLLAMA_DELETE_MODEL error: ${err.message}`)
+    return { ok: false, error: err.message }
+  }
+})
 
 // ─── App Lifecycle ───
 

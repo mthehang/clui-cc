@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMe
 import { motion, AnimatePresence } from 'framer-motion'
 import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
+import { SparkleEnhancer } from './SparkleEnhancer'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
 import { useColors, useThemeStore } from '../theme'
@@ -21,11 +22,13 @@ type VoiceState = 'idle' | 'recording' | 'transcribing'
  */
 export function InputBar() {
   const [input, setInput] = useState('')
+  const [isEnhancing, setIsEnhancing] = useState(false)
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [slashFilter, setSlashFilter] = useState<string | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
   const [isMultiLine, setIsMultiLine] = useState(false)
+  const prevIsMultiLine = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLTextAreaElement | null>(null)
@@ -59,6 +62,8 @@ export function InputBar() {
   const attachments = tab?.attachments || []
   const showSlashMenu = slashFilter !== null && !isConnecting
   const localSkills = useSessionStore((s) => s.localSkills)
+  const ollamaEnabled = useSessionStore((s) => s.ollamaEnabled)
+  const ollamaModel = useSessionStore((s) => s.ollamaModel)
   const skillCommands: SlashCommand[] = useMemo(() => {
     const sessionNames = new Set(tab?.sessionSkills || [])
     const sessionCmds: SlashCommand[] = (tab?.sessionSkills || []).map((skill) => ({
@@ -154,6 +159,20 @@ export function InputBar() {
   }, [input, measureInlineHeight])
 
   useLayoutEffect(() => { autoResize() }, [input, isMultiLine, autoResize])
+
+  // Restore focus + cursor when multi-line mode toggles.
+  // The textarea is in two separate JSX branches, so React unmounts/remounts
+  // the DOM element on every isMultiLine toggle — losing focus silently.
+  useLayoutEffect(() => {
+    if (prevIsMultiLine.current !== isMultiLine) {
+      prevIsMultiLine.current = isMultiLine
+      const el = textareaRef.current
+      if (el) {
+        el.focus()
+        el.setSelectionRange(el.value.length, el.value.length)
+      }
+    }
+  }, [isMultiLine])
 
   useEffect(() => {
     return () => {
@@ -260,9 +279,16 @@ export function InputBar() {
       case '/config':
         window.dispatchEvent(new CustomEvent('clui:open-settings'))
         break
-      case '/compact':
-        sendMessage('/compact — summarize and compact this conversation to free up context')
+      case '/compact': {
+        // Set pending compact flag — on the next sendMessage, --compact will be
+        // passed to the Claude CLI to actually compact the context window.
+        const { activeTabId, tabs } = useSessionStore.getState()
+        useSessionStore.setState({
+          tabs: tabs.map((t) => t.id === activeTabId ? { ...t, pendingCompact: true } : t),
+        })
+        addSystemMessage('Context compaction scheduled. Send your next message to compact.')
         break
+      }
       case '/memory': {
         const rules = await window.clui.readGlobalRules()
         addSystemMessage(`CLAUDE.md contents:\n\n${rules || '(empty — use /init to generate one)'}`)
@@ -603,17 +629,20 @@ export function InputBar() {
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
+                readOnly={isEnhancing}
                 placeholder={
                   isConnecting
                     ? t('input.placeholder.connecting')
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
-                      : isBusy
-                        ? t('input.placeholder.busy')
-                        : t('input.placeholder')
+                      : isEnhancing
+                        ? 'Enhancing...'
+                        : isBusy
+                          ? t('input.placeholder.busy')
+                          : t('input.placeholder')
                 }
                 rows={1}
-                className="w-full bg-transparent resize-none"
+                className={`w-full bg-transparent resize-none${isEnhancing ? ' enhancing-shimmer' : ''}`}
                 style={{
                   fontSize: 14,
                   lineHeight: '20px',
@@ -626,7 +655,29 @@ export function InputBar() {
               />
             )}
 
-            <div className="flex items-center justify-end gap-1" style={{ marginTop: 0, paddingBottom: 4 }}>
+            <div className="flex items-center justify-between gap-1" style={{ marginTop: 0, paddingBottom: 4 }}>
+              <div className="flex items-center" style={{ marginLeft: -2 }}>
+                <AnimatePresence>
+                  {ollamaEnabled && input.trim().length > 0 && voiceState === 'idle' && (
+                    <motion.div
+                      key="sparkle-multi"
+                      initial={{ opacity: 0, scale: 0.7 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.7 }}
+                      transition={{ duration: 0.12 }}
+                    >
+                      <SparkleEnhancer
+                        input={input}
+                        model={ollamaModel}
+                        onEnhanced={(text) => { setInput(text); requestAnimationFrame(() => textareaRef.current?.focus()) }}
+                        onEnhancing={setIsEnhancing}
+                        disabled={isBusy}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <div className="flex items-center gap-1">
               <VoiceButtons
                 voiceState={voiceState}
                 isConnecting={isConnecting}
@@ -651,10 +702,32 @@ export function InputBar() {
                   </motion.div>
                 )}
               </AnimatePresence>
+              </div>
             </div>
           </div>
         ) : (
           <div className="flex items-center w-full" style={{ minHeight: 50 }}>
+            {/* Sparkle — left of input, only when there's content and ollama is on */}
+            <AnimatePresence>
+              {ollamaEnabled && input.trim().length > 0 && voiceState === 'idle' && (
+                <motion.div
+                  key="sparkle-inline"
+                  initial={{ opacity: 0, scale: 0.7 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.7 }}
+                  transition={{ duration: 0.12 }}
+                  style={{ marginLeft: -4, marginRight: 2, flexShrink: 0 }}
+                >
+                  <SparkleEnhancer
+                    input={input}
+                    model={ollamaModel}
+                    onEnhanced={(text) => { setInput(text); requestAnimationFrame(() => textareaRef.current?.focus()) }}
+                    onEnhancing={setIsEnhancing}
+                    disabled={isBusy}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
             {voiceState === 'recording' ? (
               <div className="flex-1 flex items-center" style={{ minHeight: 20, paddingTop: 15, paddingBottom: 15 }}>
                 <AudioWaveform analyserRef={analyserRef} colors={colors} />
@@ -666,17 +739,20 @@ export function InputBar() {
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
+                readOnly={isEnhancing}
                 placeholder={
                   isConnecting
                     ? t('input.placeholder.connecting')
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
-                      : isBusy
-                        ? t('input.placeholder.busy')
-                        : t('input.placeholder')
+                      : isEnhancing
+                        ? 'Enhancing...'
+                        : isBusy
+                          ? t('input.placeholder.busy')
+                          : t('input.placeholder')
                 }
                 rows={1}
-                className="flex-1 bg-transparent resize-none"
+                className={`flex-1 bg-transparent resize-none${isEnhancing ? ' enhancing-shimmer' : ''}`}
                 style={{
                   fontSize: 14,
                   lineHeight: '20px',

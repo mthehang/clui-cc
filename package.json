@@ -1,6 +1,6 @@
 {
   "name": "clui",
-  "version": "0.5.1",
+  "version": "1.0.0",
   "description": "Clui CC — Command Line User Interface for Claude Code",
   "license": "MIT",
   "repository": {

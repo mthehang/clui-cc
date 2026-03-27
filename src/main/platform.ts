@@ -161,7 +161,10 @@ export function encodeProjectPath(cwd: string): string {
     normalized = normalized.replace(/\//g, '\\') // normalize to backslash on Windows
     // Uppercase drive letter for consistent encoding (c: → C:)
     normalized = normalized.replace(/^([a-z]):/, (_, d) => d.toUpperCase() + ':')
-    return normalized.replace(/:/g, '-').replace(/\\/g, '-')
+    // Replace ':', '\' AND '.' with '-' to match Claude CLI's encoding scheme.
+    // e.g. C:\Users\Matheus.PC-Matheus\Repos → C--Users-Matheus-PC-Matheus-Repos
+    return normalized.replace(/:/g, '-').replace(/\\/g, '-').replace(/\./g, '-')
   }
-  return normalized.replace(/\//g, '-')
+  // macOS/Linux: replace '/' and '.' with '-'
+  return normalized.replace(/\//g, '-').replace(/\./g, '-')
 }

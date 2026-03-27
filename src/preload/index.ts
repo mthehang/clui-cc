@@ -26,7 +26,7 @@ export interface CluiAPI {
   resetTabSession(tabId: string): void
   listSessions(projectPath?: string): Promise<SessionMeta[]>
   listAllSessions(): Promise<SessionMeta[]>
-  loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
+  loadSession(sessionId: string, projectPath?: string, encodedPath?: string): Promise<SessionLoadMessage[]>
   listLocalSkills(): Promise<Array<{ name: string; description: string; source: 'skill' | 'command' }>>
   runCliLogin(): Promise<{ ok: boolean; error?: string }>
   fetchMarketplace(forceRefresh?: boolean): Promise<{ plugins: CatalogPlugin[]; error: string | null }>
@@ -83,6 +83,14 @@ export interface CluiAPI {
   onWindowShown(callback: () => void): () => void
   onAnimateHide(callback: () => void): () => void
   onToggleTranscription(callback: () => void): () => void
+
+  // ─── Ollama prompt enhancer ───
+  ollamaCheck(): Promise<{ running: boolean; version: string | null }>
+  ollamaListModels(): Promise<{ installed: string[] }>
+  ollamaEnhancePrompt(model: string, prompt: string): Promise<{ enhanced?: string; error?: string }>
+  ollamaPullModel(model: string): Promise<{ ok: boolean; error?: string }>
+  ollamaDeleteModel(model: string): Promise<{ ok: boolean; error?: string }>
+  onOllamaPullProgress(callback: (model: string, percent: number, status: string) => void): () => void
 }
 
 const api: CluiAPI = {
@@ -110,7 +118,7 @@ const api: CluiAPI = {
   resetTabSession: (tabId) => ipcRenderer.send(IPC.RESET_TAB_SESSION, tabId),
   listSessions: (projectPath?: string) => ipcRenderer.invoke(IPC.LIST_SESSIONS, projectPath),
   listAllSessions: () => ipcRenderer.invoke(IPC.LIST_ALL_SESSIONS),
-  loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
+  loadSession: (sessionId: string, projectPath?: string, encodedPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath, encodedPath }),
   listLocalSkills: () => ipcRenderer.invoke(IPC.LIST_LOCAL_SKILLS),
   runCliLogin: () => ipcRenderer.invoke(IPC.RUN_CLI_LOGIN),
   fetchMarketplace: (forceRefresh) => ipcRenderer.invoke(IPC.MARKETPLACE_FETCH, { forceRefresh }),
@@ -231,6 +239,19 @@ const api: CluiAPI = {
     const handler = () => callback()
     ipcRenderer.on(IPC.TOGGLE_TRANSCRIPTION, handler)
     return () => ipcRenderer.removeListener(IPC.TOGGLE_TRANSCRIPTION, handler)
+  },
+
+  // ─── Ollama ───
+  ollamaCheck: () => ipcRenderer.invoke(IPC.OLLAMA_CHECK),
+  ollamaListModels: () => ipcRenderer.invoke(IPC.OLLAMA_LIST_MODELS),
+  ollamaEnhancePrompt: (model, prompt) => ipcRenderer.invoke(IPC.OLLAMA_ENHANCE_PROMPT, { model, prompt }),
+  ollamaPullModel: (model) => ipcRenderer.invoke(IPC.OLLAMA_PULL_MODEL, { model }),
+  ollamaDeleteModel: (model) => ipcRenderer.invoke(IPC.OLLAMA_DELETE_MODEL, { model }),
+  onOllamaPullProgress: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, model: string, percent: number, status: string) =>
+      callback(model, percent, status)
+    ipcRenderer.on(IPC.OLLAMA_PULL_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC.OLLAMA_PULL_PROGRESS, handler)
   },
 }
 

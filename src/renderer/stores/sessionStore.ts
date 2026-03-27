@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, CloudUsageResponse } from '../../shared/types'
 import { useThemeStore } from '../theme'
+// @ts-ignore
 import notificationSrc from '../../../resources/notification.mp3'
 
 // ─── Known models ───
@@ -60,8 +61,8 @@ interface State {
   preferredModel: string | null
   /** Global permission mode: 'ask' shows cards, 'auto' auto-approves, 'bypass' bypasses all, 'plan' plans first */
   permissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass'
-  /** Thinking effort level (token budget) — null means default */
-  effortLevel: number | null
+  /** Thinking effort level — null means Auto (no --effort flag) */
+  effortLevel: string | null
   /** Whether extended thinking is enabled */
   thinkingEnabled: boolean
   /** Response language ('auto' = no override) */
@@ -70,6 +71,25 @@ interface State {
   appLanguage: 'en' | 'pt-BR'
   /** Persistent global system prompt */
   globalRules: string
+  /** Max agent turns per task (default 25) */
+  maxTurns: number
+  /** Whether to pre-warm new sessions (uses 1 API call per tab) */
+  warmupEnabled: boolean
+  /** Whether to inject CLUI_SYSTEM_HINT on new sessions */
+  systemHintEnabled: boolean
+  /** % fill at which to auto-schedule compaction (default 80) */
+  autoCompactThreshold: number
+  /** Per-session spending cap in USD; null = unlimited */
+  maxBudgetUsd: number | null
+  /** Whether the Ollama prompt enhancer is enabled */
+  ollamaEnabled: boolean
+  /** Which local model to use for enhancement */
+  ollamaModel: string
+  /** Vertical offset of the pill above default bottom (pixels, min 0) */
+  uiOffsetY: number
+  /** Horizontal offset of the pill from center (pixels, signed) */
+  uiOffsetX: number
+  setUiOffset: (x: number, y: number) => void
 
   // Marketplace state
   marketplaceOpen: boolean
@@ -94,7 +114,14 @@ interface State {
   initStaticInfo: () => Promise<void>
   setPreferredModel: (model: string | null) => void
   setPermissionMode: (mode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass') => void
-  setEffortLevel: (level: number | null) => void
+  setEffortLevel: (level: string | null) => void
+  setMaxTurns: (n: number) => void
+  setWarmupEnabled: (enabled: boolean) => void
+  setSystemHintEnabled: (enabled: boolean) => void
+  setAutoCompactThreshold: (pct: number) => void
+  setMaxBudgetUsd: (usd: number | null) => void
+  setOllamaEnabled: (enabled: boolean) => void
+  setOllamaModel: (model: string) => void
   createTab: () => Promise<string>
   selectTab: (tabId: string) => void
   closeTab: (tabId: string) => void
@@ -111,15 +138,15 @@ interface State {
   installMarketplacePlugin: (plugin: CatalogPlugin) => Promise<void>
   uninstallMarketplacePlugin: (plugin: CatalogPlugin) => Promise<void>
   buildYourOwn: () => void
-  resumeSession: (sessionId: string, title?: string, projectPath?: string) => Promise<string>
+  resumeSession: (sessionId: string, title?: string, projectPath?: string, encodedPath?: string) => Promise<string>
   addSystemMessage: (content: string) => void
   sendMessage: (prompt: string, projectPath?: string) => void
   respondPermission: (tabId: string, questionId: string, optionId: string) => void
   setTabModel: (tabId: string, model: string | null) => void
   setTabPermissionMode: (tabId: string, mode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass' | null) => void
-  setTabEffortLevel: (tabId: string, level: number | null) => void
+  setTabEffortLevel: (tabId: string, level: string | null) => void
   setTabThinkingEnabled: (tabId: string, enabled: boolean | null) => void
-  getActiveTabConfig: () => { model: string | null; permissionMode: string; effortLevel: number | null; thinkingEnabled: boolean }
+  getActiveTabConfig: () => { model: string | null; permissionMode: string; effortLevel: string | null; thinkingEnabled: boolean }
   changeDirectory: (dir: string) => void
   addAttachments: (attachments: Attachment[]) => void
   removeAttachment: (attachmentId: string) => void
@@ -174,6 +201,10 @@ function makeLocalTab(): TabState {
     tabPermissionMode: null,
     tabEffortLevel: null,
     tabThinkingEnabled: null,
+    contextWindowUsed: 0,
+    contextWindowBudget: 0,
+    autoCompactAt: 0,
+    pendingCompact: false,
   }
 }
 
@@ -191,6 +222,19 @@ export const useSessionStore = create<State>((set, get) => ({
   responseLanguage: 'auto',
   appLanguage: 'en' as const,
   globalRules: '',
+  maxTurns: 25,
+  warmupEnabled: false,
+  systemHintEnabled: true,
+  autoCompactThreshold: 80,
+  maxBudgetUsd: null,
+  ollamaEnabled: false,
+  ollamaModel: 'qwen3:1.7b',
+  uiOffsetY: 0,
+  uiOffsetX: 0,
+  setUiOffset: (x, y) => {
+    set({ uiOffsetX: x, uiOffsetY: y })
+    window.clui.saveSettings({ uiOffsetX: x, uiOffsetY: y })
+  },
 
   // Local skills
   localSkills: [],
@@ -227,6 +271,36 @@ export const useSessionStore = create<State>((set, get) => ({
   },
 
   initStaticInfo: async () => {
+    // Settings load independently — must not be skipped if start() fails (e.g. auth expired)
+    try {
+      const settings = await window.clui.getSettings()
+      if (settings) {
+        // Migrate legacy: planMode:true + permissionMode:'ask' → permissionMode:'plan'
+        let mode = settings.permissionMode || 'ask'
+        if (settings.planMode && mode === 'ask') mode = 'plan'
+        set({
+          permissionMode: mode as 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass',
+          // Migrate legacy numeric effortLevel to string ('low'|'medium'|'high'|'max')
+          effortLevel: (typeof settings.effortLevel === 'string' ? settings.effortLevel : null),
+          thinkingEnabled: settings.thinkingEnabled !== false,
+          responseLanguage: settings.responseLanguage || 'auto',
+          appLanguage: (settings.appLanguage === 'pt-BR' ? 'pt-BR' : 'en') as 'en' | 'pt-BR',
+          globalRules: settings.globalRules || '',
+          maxTurns: settings.maxTurns ?? 25,
+          warmupEnabled: settings.warmupEnabled ?? false,
+          systemHintEnabled: settings.systemHintEnabled !== false,
+          autoCompactThreshold: settings.autoCompactThreshold ?? 80,
+          maxBudgetUsd: settings.maxBudgetUsd ?? null,
+          ollamaEnabled: settings.ollamaEnabled ?? false,
+          ollamaModel: settings.ollamaModel || 'qwen3:1.7b',
+          uiOffsetY: settings.uiOffsetY ?? 0,
+          uiOffsetX: settings.uiOffsetX ?? 0,
+        })
+      }
+    } catch {}
+    // Restore custom shortcut from persisted settings
+    const customShortcut = useThemeStore.getState().customShortcut
+    if (customShortcut) window.clui.setShortcut(customShortcut)
     try {
       const result = await window.clui.start()
       set({
@@ -238,29 +312,9 @@ export const useSessionStore = create<State>((set, get) => ({
           homePath: result.homePath || '~',
         },
       })
-      // Load persisted settings and apply to store
-      try {
-        const settings = await window.clui.getSettings()
-        if (settings) {
-          // Migrate legacy: planMode:true + permissionMode:'ask' → permissionMode:'plan'
-          let mode = settings.permissionMode || 'ask'
-          if (settings.planMode && mode === 'ask') mode = 'plan'
-          set({
-            permissionMode: mode as 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass',
-            effortLevel: settings.effortLevel ?? null,
-            thinkingEnabled: settings.thinkingEnabled !== false,
-            responseLanguage: settings.responseLanguage || 'auto',
-            appLanguage: (settings.appLanguage === 'pt-BR' ? 'pt-BR' : 'en') as 'en' | 'pt-BR',
-            globalRules: settings.globalRules || '',
-          })
-        }
-      } catch {}
-      // Restore custom shortcut from persisted settings
-      const customShortcut = useThemeStore.getState().customShortcut
-      if (customShortcut) window.clui.setShortcut(customShortcut)
-      // Load local skills after startup
-      await get().loadLocalSkills()
     } catch {}
+    // Load local skills after startup (also independent of start())
+    await get().loadLocalSkills().catch(() => {})
   },
 
   setPreferredModel: (model) => {
@@ -276,6 +330,44 @@ export const useSessionStore = create<State>((set, get) => ({
   setEffortLevel: (level) => {
     set({ effortLevel: level })
     window.clui.saveSettings({ effortLevel: level })
+  },
+
+  setMaxTurns: (n) => {
+    const clamped = Math.max(1, Math.min(200, Math.round(n)))
+    set({ maxTurns: clamped })
+    window.clui.saveSettings({ maxTurns: clamped })
+  },
+
+  setWarmupEnabled: (enabled) => {
+    set({ warmupEnabled: enabled })
+    window.clui.saveSettings({ warmupEnabled: enabled })
+  },
+
+  setSystemHintEnabled: (enabled) => {
+    set({ systemHintEnabled: enabled })
+    window.clui.saveSettings({ systemHintEnabled: enabled })
+  },
+
+  setAutoCompactThreshold: (pct) => {
+    const clamped = Math.max(50, Math.min(99, Math.round(pct)))
+    set({ autoCompactThreshold: clamped })
+    window.clui.saveSettings({ autoCompactThreshold: clamped })
+  },
+
+  setMaxBudgetUsd: (usd) => {
+    const v = usd !== null ? Math.max(0, usd) : null
+    set({ maxBudgetUsd: v })
+    window.clui.saveSettings({ maxBudgetUsd: v })
+  },
+
+  setOllamaEnabled: (enabled) => {
+    set({ ollamaEnabled: enabled })
+    window.clui.saveSettings({ ollamaEnabled: enabled })
+  },
+
+  setOllamaModel: (model) => {
+    set({ ollamaModel: model })
+    window.clui.saveSettings({ ollamaModel: model })
   },
 
   createTab: async () => {
@@ -446,7 +538,7 @@ export const useSessionStore = create<State>((set, get) => ({
     const tab = tabs.find((t) => t.id === activeTabId)
     // If current tab is dead/failed/completed, create a fresh tab first
     if (!tab || tab.status === 'dead' || tab.status === 'failed' || tab.status === 'completed') {
-      try { await get().addTab() } catch {}
+      try { await window.clui.createTab() } catch {}
       await new Promise((r) => setTimeout(r, 300))
     }
     setTimeout(() => {
@@ -485,7 +577,7 @@ export const useSessionStore = create<State>((set, get) => ({
     }))
   },
 
-  resumeSession: async (sessionId, title, projectPath) => {
+  resumeSession: async (sessionId, title, projectPath, encodedPath) => {
     const homePath = get().staticInfo?.homePath || '~'
     // Normalize projectPath: strip trailing slashes, fix separators
     const isWin = navigator.userAgent.includes('Windows') || navigator.platform?.startsWith('Win')
@@ -497,7 +589,7 @@ export const useSessionStore = create<State>((set, get) => ({
       const { tabId } = await window.clui.createTab()
 
       // Load previous conversation messages from the JSONL file
-      const history = await window.clui.loadSession(sessionId, defaultDir).catch(() => [])
+      const history = await window.clui.loadSession(sessionId, defaultDir, encodedPath).catch(() => [])
       const messages: Message[] = history.map((m) => ({
         id: nextMsgId(),
         role: m.role as Message['role'],
@@ -513,7 +605,9 @@ export const useSessionStore = create<State>((set, get) => ({
         claudeSessionId: sessionId,
         title: title || 'Resumed Session',
         workingDirectory: defaultDir,
-        hasChosenDirectory: !!normalizedPath,
+        // Always mark hasChosenDirectory=true so sendMessage uses the session's
+        // original directory, not the global home fallback
+        hasChosenDirectory: true,
         messages,
       }
       set((s) => ({
@@ -720,8 +814,14 @@ export const useSessionStore = create<State>((set, get) => ({
     }))
 
     // Send to backend — ControlPlane will queue if a run is active
-    const { preferredModel, effortLevel, permissionMode, thinkingEnabled, responseLanguage, globalRules } = get()
-    const isPlan = permissionMode === 'plan'
+    const { preferredModel, effortLevel, permissionMode, thinkingEnabled, responseLanguage, globalRules, maxTurns, systemHintEnabled, maxBudgetUsd } = get()
+
+    // D1/D2: Use per-tab overrides if set, otherwise fall back to global
+    const effectiveModel = tab.tabModel ?? preferredModel
+    const effectivePermission = tab.tabPermissionMode ?? permissionMode
+    const effectiveEffort = tab.tabEffortLevel ?? effortLevel
+    const effectiveThinking = tab.tabThinkingEnabled ?? thinkingEnabled
+    const isPlan = effectivePermission === 'plan'
 
     // Compose system prompt from plan mode + language + global rules
     const LANG_NAMES: Record<string, string> = {
@@ -731,7 +831,8 @@ export const useSessionStore = create<State>((set, get) => ({
     }
     const parts: string[] = []
     if (isPlan) {
-      parts.push('You are in PLAN MODE. Analyze the request carefully and create a detailed step-by-step plan. Do NOT execute any tools or make any changes. Only describe what you would do, the files you would modify, and why. Wait for the user to explicitly approve or say "go ahead" before proceeding with execution.')
+      // A5: Shortened plan-mode instruction (was ~60 words, now ~25)
+      parts.push('PLAN MODE: Analyze and outline a step-by-step plan. Do NOT execute tools or make changes. Wait for explicit user approval before acting.')
     }
     if (responseLanguage !== 'auto' && LANG_NAMES[responseLanguage]) {
       parts.push(`Always respond in ${LANG_NAMES[responseLanguage]}.`)
@@ -740,17 +841,34 @@ export const useSessionStore = create<State>((set, get) => ({
       parts.push(globalRules.trim())
     }
     const systemPrompt = parts.length > 0 ? parts.join('\n\n') : undefined
-    const effectiveThinkingBudget = thinkingEnabled ? (effortLevel || undefined) : undefined
+    // A4: effort level — only pass when thinking is enabled and a non-Auto level is selected
+    // Brain ON + specific level → pass that level
+    // Brain ON + Auto (null) → pass 'medium' as sensible default for "thinking on"
+    // Brain OFF → no --effort flag (Claude uses adaptive default)
+    const effectiveEffortLevel = effectiveThinking
+      ? (effectiveEffort ?? 'medium')
+      : undefined
+
+    // Consume pendingCompact (set by /compact or auto at 95% fill)
+    const compactThisRun = tab.pendingCompact
+    if (compactThisRun) {
+      set((s) => ({
+        tabs: s.tabs.map((t) => t.id === activeTabId ? { ...t, pendingCompact: false } : t),
+      }))
+    }
 
     window.clui.prompt(activeTabId, requestId, {
       prompt: fullPrompt,
       projectPath: resolvedPath,
       sessionId: tab.claudeSessionId || undefined,
-      model: preferredModel || undefined,
-      thinkingBudget: effectiveThinkingBudget,
-
+      model: effectiveModel || undefined,
+      effortLevel: effectiveEffortLevel,
+      compact: compactThisRun || undefined,
       systemPrompt,
-      permissionMode: isPlan ? 'ask' : undefined,
+      maxTurns,
+      skipSystemHint: !systemHintEnabled,
+      maxBudgetUsd: maxBudgetUsd || undefined,
+      permissionMode: isPlan ? 'ask' : (effectivePermission !== permissionMode ? effectivePermission : undefined),
     }).catch((err: Error) => {
       get().handleError(activeTabId, {
         message: err.message,
@@ -900,6 +1018,23 @@ export const useSessionStore = create<State>((set, get) => ({
                   }
                 }
               }
+            }
+            break
+          }
+
+          case 'context_window': {
+            updated.contextWindowUsed = event.used
+            if (event.budget > 0) updated.contextWindowBudget = event.budget
+            if (event.autoCompactAt != null && event.autoCompactAt > 0) {
+              updated.autoCompactAt = event.autoCompactAt
+            }
+            const fillPct = updated.contextWindowBudget > 0
+              ? updated.contextWindowUsed / updated.contextWindowBudget
+              : 0
+            // Auto-flag compact at user-configured threshold (default 80%)
+            const threshold = (s.autoCompactThreshold ?? 80) / 100
+            if (fillPct >= threshold && !updated.pendingCompact) {
+              updated.pendingCompact = true
             }
             break
           }

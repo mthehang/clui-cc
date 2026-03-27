@@ -155,8 +155,12 @@ export default function App() {
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
   const usagePanelOpen = useSessionStore((s) => s.usagePanelOpen)
-  const thinkingEnabled = useSessionStore((s) => s.thinkingEnabled)
+  const globalThinkingEnabled = useSessionStore((s) => s.thinkingEnabled)
+  const setTabThinkingEnabled = useSessionStore((s) => s.setTabThinkingEnabled)
   const activeTab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
+  const thinkingEnabled = activeTab?.tabThinkingEnabled ?? globalThinkingEnabled
+  const uiOffsetY = useSessionStore((s) => s.uiOffsetY)
+  const uiOffsetX = useSessionStore((s) => s.uiOffsetX)
 
   const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
 
@@ -209,7 +213,13 @@ export default function App() {
 
   return (
     <PopoverLayerProvider>
-      <div className="flex flex-col justify-end h-full" style={{ background: 'transparent' }}>
+      <div
+        className="flex flex-col justify-end h-full"
+        style={{
+          background: 'transparent',
+          paddingBottom: uiOffsetY,
+        }}
+      >
 
         {/* ─── 460px content column, centered. Circles overflow left. ─── */}
         <motion.div
@@ -219,7 +229,7 @@ export default function App() {
             : { opacity: 0, y: 18, scale: 0.97 }
           }
           transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
-          style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)' }}
+          style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)', transform: `translateX(${uiOffsetX}px)` }}
         >
 
           <AnimatePresence initial={false}>
@@ -404,9 +414,16 @@ export default function App() {
                   className="stack-btn stack-btn-r1 glass-surface"
                   title={thinkingEnabled ? 'Extended thinking ON' : 'Extended thinking OFF'}
                   onClick={() => {
-                    const next = !useSessionStore.getState().thinkingEnabled
-                    useSessionStore.setState({ thinkingEnabled: next })
-                    window.clui.saveSettings({ thinkingEnabled: next })
+                    const s = useSessionStore.getState()
+                    const tabId = s.activeTabId
+                    const tab = s.tabs.find((t) => t.id === tabId)
+                    const current = tab?.tabThinkingEnabled ?? s.thinkingEnabled
+                    if (tab) {
+                      setTabThinkingEnabled(tabId, !current)
+                    } else {
+                      useSessionStore.setState({ thinkingEnabled: !current })
+                      window.clui.saveSettings({ thinkingEnabled: !current })
+                    }
                   }}
                   style={thinkingEnabled ? { color: colors.accent } : undefined}
                 >
@@ -487,7 +504,7 @@ export default function App() {
                   onClick={(e) => e.currentTarget.select()}
                   style={{
                     fontSize: 11, padding: '6px 8px', borderRadius: 8,
-                    border: `1px solid ${colors.border}`, background: colors.bgSecondary,
+                    border: `1px solid ${colors.containerBorder}`, background: colors.surfacePrimary,
                     color: colors.textPrimary, width: '100%', outline: 'none',
                     fontFamily: 'monospace',
                   }}

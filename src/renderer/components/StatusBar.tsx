@@ -15,8 +15,7 @@ function ModelPicker() {
   const setPreferredModel = useSessionStore((s) => s.setPreferredModel)
   const setTabModel = useSessionStore((s) => s.setTabModel)
   const tab = useSessionStore(
-    (s) => s.tabs.find((t) => t.id === s.activeTabId),
-    (a, b) => a === b || (!!a && !!b && a.status === b.status && a.sessionModel === b.sessionModel && a.tabModel === b.tabModel),
+    (s) => s.tabs.find((t) => t.id === s.activeTabId)
   )
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
@@ -139,8 +138,7 @@ function PermissionModePicker() {
   const setPermissionMode = useSessionStore((s) => s.setPermissionMode)
   const setTabPermissionMode = useSessionStore((s) => s.setTabPermissionMode)
   const tab = useSessionStore(
-    (s) => s.tabs.find((t) => t.id === s.activeTabId),
-    (a, b) => a === b || (!!a && !!b && a.tabPermissionMode === b.tabPermissionMode),
+    (s) => s.tabs.find((t) => t.id === s.activeTabId)
   )
   const permissionMode = tab?.tabPermissionMode ?? globalPermissionMode
   const popoverLayer = usePopoverLayer()
@@ -350,12 +348,12 @@ function PermissionModePicker() {
 
 /* ─── Effort Picker (thinking budget) ─── */
 
-const EFFORT_OPTIONS: Array<{ label: string; value: number | null; weight: IconWeight }> = [
+const EFFORT_OPTIONS: Array<{ label: string; value: string | null; weight: IconWeight }> = [
   { label: 'Auto', value: null, weight: 'thin' },
-  { label: 'Low', value: 4096, weight: 'light' },
-  { label: 'Medium', value: 8192, weight: 'regular' },
-  { label: 'High', value: 16384, weight: 'bold' },
-  { label: 'Max', value: 32768, weight: 'fill' },
+  { label: 'Low', value: 'low', weight: 'light' },
+  { label: 'Medium', value: 'medium', weight: 'regular' },
+  { label: 'High', value: 'high', weight: 'bold' },
+  { label: 'Max', value: 'max', weight: 'fill' },
 ]
 
 function EffortPicker() {
@@ -363,8 +361,7 @@ function EffortPicker() {
   const setEffortLevel = useSessionStore((s) => s.setEffortLevel)
   const setTabEffortLevel = useSessionStore((s) => s.setTabEffortLevel)
   const tab = useSessionStore(
-    (s) => s.tabs.find((t) => t.id === s.activeTabId),
-    (a, b) => a === b || (!!a && !!b && a.tabEffortLevel === b.tabEffortLevel),
+    (s) => s.tabs.find((t) => t.id === s.activeTabId)
   )
   const effortLevel = tab?.tabEffortLevel !== undefined && tab?.tabEffortLevel !== null ? tab.tabEffortLevel : globalEffortLevel
   const popoverLayer = usePopoverLayer()
@@ -416,7 +413,7 @@ function EffortPicker() {
         }}
         title={`Thinking effort: ${activeOption.label}`}
       >
-        <Gauge size={11} weight={activeOption.weight} style={activeOption.value === 32768 ? { color: colors.accent } : undefined} />
+        <Gauge size={11} weight={activeOption.weight} style={activeOption.value === 'max' ? { color: colors.accent } : undefined} />
         {expandedUI && <span className="hidden sm:inline">{activeOption.label}</span>}
         <CaretDown size={10} style={{ opacity: 0.6 }} />
       </button>
@@ -461,7 +458,7 @@ function EffortPicker() {
                     }}
                   >
                     <span className="flex items-center gap-1.5">
-                      <Gauge size={12} weight={opt.weight} style={opt.value === 32768 ? { color: colors.accent } : undefined} />
+                      <Gauge size={12} weight={opt.weight} style={opt.value === 'max' ? { color: colors.accent } : undefined} />
                       {opt.label}
                     </span>
                     {isSelected && <Check size={12} style={{ color: colors.accent }} />}
@@ -493,20 +490,29 @@ function formatTokenCount(n: number): string {
   return String(n)
 }
 
+function formatCost(usd: number): string {
+  if (usd <= 0) return ''
+  if (usd < 0.001) return '<$0.001'
+  if (usd < 0.01) return `$${usd.toFixed(3)}`
+  return `$${usd.toFixed(2)}`
+}
+
+function EffortPickerConditional() {
+  const globalThinking = useSessionStore((s) => s.thinkingEnabled)
+  const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
+  const effectiveThinking = tab?.tabThinkingEnabled ?? globalThinking
+  if (!effectiveThinking) return null
+  return <EffortPicker />
+}
+
 export function StatusBar() {
   const t = useT()
   const tab = useSessionStore(
-    (s) => s.tabs.find((t) => t.id === s.activeTabId),
-    (a, b) => a === b || (!!a && !!b
-      && a.status === b.status
-      && a.hasChosenDirectory === b.hasChosenDirectory
-      && a.workingDirectory === b.workingDirectory
-      && a.claudeSessionId === b.claudeSessionId
-      && a.cumulativeUsage.totalInputTokens === b.cumulativeUsage.totalInputTokens
-      && a.cumulativeUsage.totalOutputTokens === b.cumulativeUsage.totalOutputTokens
-    ),
+    (s) => s.tabs.find((t) => t.id === s.activeTabId)
   )
   const changeDirectory = useSessionStore((s) => s.changeDirectory)
+  const maxBudgetUsd = useSessionStore((s) => s.maxBudgetUsd)
+  const autoCompactThreshold = useSessionStore((s) => s.autoCompactThreshold)
   const expandedUI = useThemeStore((s) => s.expandedUI)
   const compact = !expandedUI
   const popoverLayer = usePopoverLayer()
@@ -644,38 +650,84 @@ export function StatusBar() {
 
         <PermissionModePicker />
 
-        <EffortPicker />
+        <EffortPickerConditional />
       </div>
 
       {/* Right — context % + CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        {(() => {
-          const inputTokens = tab.lastResult?.usage?.input_tokens ?? 0
-          const contextLimit = 200_000
-          const pct = Math.min(100, Math.round((inputTokens / contextLimit) * 100))
-          const color = pct >= 80 ? colors.contextHigh
-            : pct >= 60 ? colors.contextMedium
+      {(() => {
+          // Use real context_window data from message_delta if available,
+          // fall back to last-run input_tokens / hardcoded limit for older sessions.
+          const hasRealData = (tab.contextWindowBudget || 0) > 0
+          const used = hasRealData
+            ? tab.contextWindowUsed
+            : (tab.lastResult?.usage?.input_tokens ?? 0)
+          const budget = hasRealData
+            ? tab.contextWindowBudget
+            : 200_000 // Claude Sonnet/Opus default
+
+          // Raw % of total context used (matches CLI output)
+          const rawPct = budget > 0 ? Math.min(100, (used / budget) * 100) : 0
+
+          // Bar fills relative to auto-compact threshold so it reaches 100% exactly when compaction triggers.
+          // e.g. used=8%, threshold=80% → bar=10% (8/80). Intuitive: full bar = compact time.
+          const thresholdFraction = Math.max(0.01, autoCompactThreshold / 100)
+          const barPct = Math.min(100, Math.round(rawPct / thresholdFraction))
+
+          // Display label: whole-number % of total context used
+          const displayPct = Math.round(rawPct)
+
+          // Color based on bar fill (distance to threshold)
+          const color = barPct >= 100 ? colors.contextHigh
+            : barPct >= 80 ? colors.contextMedium
             : colors.contextLow
-          const tooltipText = inputTokens > 0
-            ? `${t('status.context')}: ${pct}% (${formatTokenCount(inputTokens)} / ${formatTokenCount(contextLimit)} tokens)`
-            : `${t('status.context')}: 0% — ${t('status.context.empty')}`
+
+          const tooltipParts = [
+            `${formatTokenCount(used)} / ${formatTokenCount(budget)} tokens`,
+            `${displayPct}% of total context`,
+            `auto-compact at ${autoCompactThreshold}% (${formatTokenCount(Math.round(budget * thresholdFraction))})`,
+          ]
+          if (!hasRealData && used > 0) tooltipParts.push('(estimate — real data arrives after 1st message)')
+          if (tab.pendingCompact) tooltipParts.push('⚡ Compact scheduled')
+          const tooltipText = used > 0 ? tooltipParts.join('\n') : 'No messages sent yet'
           return (
             <span
               className="text-[10px] tabular-nums flex items-center gap-1"
-              style={{ color, opacity: pct >= 60 ? 1 : 0.6 }}
+              style={{ color, opacity: barPct >= 40 ? 1 : 0.6 }}
               title={tooltipText}
             >
-              {!compact && <span className="text-[9px]" style={{ opacity: 0.8 }}>{t('status.context')}</span>}
+              {!compact && <span className="text-[9px]" style={{ opacity: 0.7 }}>ctx</span>}
+              {tab.pendingCompact && <span style={{ fontSize: 9, color: colors.accent }}>⚡</span>}
               <span style={{
-                display: 'inline-block', width: 24, height: 4, borderRadius: 2,
+                display: 'inline-block', width: 28, height: 4, borderRadius: 2,
                 background: colors.contextTrack, overflow: 'hidden', position: 'relative',
               }}>
                 <span style={{
                   position: 'absolute', left: 0, top: 0, height: '100%',
-                  width: `${pct}%`, borderRadius: 2, background: color,
+                  width: `${barPct}%`, borderRadius: 2, background: color,
+                  transition: 'width 0.4s ease',
                 }} />
               </span>
-              {pct}%
+              <span>{displayPct}%</span>
+            </span>
+          )
+        })()}
+        {tab.cumulativeUsage.totalCostUsd > 0 && (() => {
+          const cost = tab.cumulativeUsage.totalCostUsd
+          const lastCost = tab.lastResult?.totalCostUsd ?? 0
+          const overBudget = maxBudgetUsd !== null && cost >= maxBudgetUsd
+          const nearBudget = maxBudgetUsd !== null && cost >= maxBudgetUsd * 0.8
+          const costColor = overBudget ? colors.contextHigh
+            : nearBudget ? colors.contextMedium
+            : colors.textTertiary
+          const budgetText = maxBudgetUsd !== null ? ` / $${maxBudgetUsd.toFixed(2)}` : ''
+          return (
+            <span
+              className="text-[10px] tabular-nums"
+              style={{ color: costColor, opacity: overBudget || nearBudget ? 1 : 0.7 }}
+              title={`Session cost: ${formatCost(cost)}${budgetText}\nLast run: ${formatCost(lastCost)}`}
+            >
+              {formatCost(cost)}{budgetText}
             </span>
           )
         })()}

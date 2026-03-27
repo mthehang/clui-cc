@@ -30,7 +30,12 @@ export type StreamSubEvent =
   | { type: 'content_block_start'; index: number; content_block: ContentBlock }
   | { type: 'content_block_delta'; index: number; delta: ContentDelta }
   | { type: 'content_block_stop'; index: number }
-  | { type: 'message_delta'; delta: { stop_reason: string | null }; usage: UsageData; context_management?: unknown }
+  | { type: 'message_delta'; delta: { stop_reason: string | null }; usage: UsageData; context_management?: {
+      context_window_used?: number;
+      context_window_budget?: number;
+      auto_compact_at?: number;
+      [key: string]: unknown;
+    } }
   | { type: 'message_stop' }
 
 export interface ContentBlock {
@@ -175,9 +180,17 @@ export interface TabState {
   /** Per-tab permission mode override (null = use global default) */
   tabPermissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass' | null
   /** Per-tab effort level override (null = use global default) */
-  tabEffortLevel: number | null
+  tabEffortLevel: string | null
   /** Per-tab thinking enabled override (null = use global default) */
   tabThinkingEnabled: boolean | null
+  /** Current context window usage (tokens used, from message_delta context_management) */
+  contextWindowUsed: number
+  /** Context window budget/limit (total tokens available) */
+  contextWindowBudget: number
+  /** Token threshold at which Claude CLI will auto-compact (from context_management event) */
+  autoCompactAt: number
+  /** Whether the next run should pass --compact to compact context */
+  pendingCompact: boolean
 }
 
 export interface Message {
@@ -220,6 +233,7 @@ export type NormalizedEvent =
   | { type: 'error'; message: string; isError: boolean; sessionId?: string }
   | { type: 'session_dead'; exitCode: number | null; signal: string | null; stderrTail: string[] }
   | { type: 'rate_limit'; status: string; resetsAt: number; rateLimitType: string }
+  | { type: 'context_window'; used: number; budget: number; autoCompactAt?: number; isCompacted?: boolean }
   | { type: 'usage'; usage: UsageData }
   | { type: 'permission_request'; questionId: string; toolName: string; toolDescription?: string; toolInput?: Record<string, unknown>; options: Array<{ id: string; label: string; kind?: string }> }
 
@@ -237,7 +251,12 @@ export interface RunOptions {
   /** Path to CLUI-scoped settings file with hook config (passed via --settings) */
   hookSettingsPath?: string
   permissionMode?: string
-  thinkingBudget?: number
+  /** Effort level: 'low' | 'medium' | 'high' | 'max' — maps to --effort CLI flag */
+  effortLevel?: string
+  /** When true, skip CLUI_SYSTEM_HINT injection (used for warmup inits) */
+  skipSystemHint?: boolean
+  /** When true, pass --compact to the Claude CLI to compact context before this run */
+  compact?: boolean
 }
 
 // ─── Control Plane Types ───
@@ -284,6 +303,8 @@ export interface SessionMeta {
   lastTimestamp: string
   size: number
   projectPath?: string
+  /** Raw encoded folder name under ~/.claude/projects/ — used directly in LOAD_SESSION to avoid lossy decode→encode round-trip */
+  encodedPath?: string
 }
 
 export interface SessionLoadMessage {
@@ -320,7 +341,7 @@ export interface AppSettings {
   autoStart: boolean
   startHidden: boolean
   permissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass'
-  effortLevel: number | null
+  effortLevel: string | null
   planMode: boolean  // legacy — derived from permissionMode === 'plan'
   secondaryShortcut: string | null
   transcriptionShortcut: string | null
@@ -331,10 +352,24 @@ export interface AppSettings {
   whisperLanguage: string
   whisperDevice: string
   appLanguage: string
-  windowMarginTop: number
-  windowMarginBottom: number
-  windowMarginLeft: number
-  windowMarginRight: number
+  /** Vertical offset of the pill above default bottom position (pixels, min 0) */
+  uiOffsetY: number
+  /** Horizontal offset of the pill from center (pixels, positive=right, negative=left) */
+  uiOffsetX: number
+  maxTurns: number
+  warmupEnabled: boolean
+  /** Inject CLUI_SYSTEM_HINT on new sessions (improves markdown output, costs ~50 tokens) */
+  systemHintEnabled: boolean
+  /** % fill at which to auto-schedule context compaction (1-99, default 80) */
+  autoCompactThreshold: number
+  /** Per-session spending cap in USD; null = unlimited */
+  maxBudgetUsd: number | null
+  /** Whether the Ollama prompt enhancer is active */
+  ollamaEnabled: boolean
+  /** Which local model to use for enhancement (e.g. 'qwen3:1.7b') */
+  ollamaModel: string
+  /** Ollama REST endpoint (default: http://localhost:11434) */
+  ollamaEndpoint: string
 }
 
 // ─── Cloud Usage Types (claude.ai-style bars) ───
@@ -469,6 +504,14 @@ export const IPC = {
   RC_STOP: 'clui:rc-stop',
   RC_URL: 'clui:rc-url',
   RC_STOPPED: 'clui:rc-stopped',
+
+  // Ollama prompt enhancer
+  OLLAMA_CHECK: 'clui:ollama-check',
+  OLLAMA_LIST_MODELS: 'clui:ollama-list-models',
+  OLLAMA_ENHANCE_PROMPT: 'clui:ollama-enhance-prompt',
+  OLLAMA_PULL_MODEL: 'clui:ollama-pull-model',
+  OLLAMA_PULL_PROGRESS: 'clui:ollama-pull-progress',
+  OLLAMA_DELETE_MODEL: 'clui:ollama-delete-model',
 
   // Legacy (kept for backward compat during migration)
   STREAM_EVENT: 'clui:stream-event',

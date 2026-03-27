@@ -3,6 +3,20 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 1s linear infinite; }
 
+/* Sparkle stars — static, subtle */
+.sparkle-1, .sparkle-2, .sparkle-3 { opacity: 0.9; }
+
+/* Enhancing shimmer — standardized with transcribing loading state */
+@keyframes enhance-shimmer {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.2; }
+}
+.enhancing-shimmer {
+  animation: enhance-shimmer 1.1s ease-in-out infinite;
+  pointer-events: none;
+  user-select: none;
+}
+
 /*
  * ─── Theme CSS Variables ───
  * Generated at runtime by syncTokensToCss() in theme.ts.
