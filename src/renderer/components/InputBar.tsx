@@ -29,6 +29,7 @@ export function InputBar() {
   const [slashIndex, setSlashIndex] = useState(0)
   const [isMultiLine, setIsMultiLine] = useState(false)
   const prevIsMultiLine = useRef(false)
+  const selectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLTextAreaElement | null>(null)
@@ -169,7 +170,8 @@ export function InputBar() {
       const el = textareaRef.current
       if (el) {
         el.focus()
-        el.setSelectionRange(el.value.length, el.value.length)
+        const { start, end } = selectionRef.current
+        el.setSelectionRange(start, end)
       }
     }
   }, [isMultiLine])
@@ -432,7 +434,8 @@ export function InputBar() {
   }, [input, isBusy, sendMessage, attachments.length, showSlashMenu, slashFilter, slashIndex, handleSlashSelect])
 
   // ─── Keyboard ───
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    selectionRef.current = { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd }
     if (showSlashMenu) {
       const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex((i) => (i + 1) % filtered.length); return }
@@ -446,6 +449,7 @@ export function InputBar() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
+    selectionRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd }
     setInput(value)
     updateSlashFilter(value)
   }
