@@ -26,7 +26,8 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { log as _log } from '../logger'
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
-const DEFAULT_PORT = 19836
+// B3: Use port 0 (OS-assigned random) instead of predictable fixed port
+const DEFAULT_PORT = 0
 const MAX_BODY_SIZE = 1024 * 1024 // 1MB
 
 const DEBUG = process.env.CLUI_DEBUG === '1'
@@ -92,6 +93,9 @@ function isSafeBashCommand(command: unknown): boolean {
   // Split on ;, &&, ||, | and check each segment
   const segments = trimmed.split(/\s*(?:;|&&|\|\||[|])\s*/)
   for (const segment of segments) {
+    // B2: Reject subshell patterns that could bypass the safe-command check
+    if (/[`]/.test(segment) || /\$\(/.test(segment) || /\$\{/.test(segment)) return false
+
     const parts = segment.trim().split(/\s+/)
     const cmd = parts[0]
     if (!cmd) continue
@@ -220,6 +224,7 @@ interface RunRegistration {
   tabId: string
   requestId: string
   sessionId: string | null
+  permissionMode?: string
 }
 
 /**
@@ -273,9 +278,10 @@ export class PermissionServer extends EventEmitter {
       })
 
       this.server.listen(this.port, '127.0.0.1', () => {
-        this._actualPort = this.port
-        log(`Permission server listening on 127.0.0.1:${this.port}`)
-        resolve(this.port)
+        const addr = this.server!.address() as import('net').AddressInfo
+        this._actualPort = addr.port
+        log(`Permission server listening on 127.0.0.1:${this._actualPort}`)
+        resolve(this._actualPort)
       })
     })
   }
@@ -311,9 +317,9 @@ export class PermissionServer extends EventEmitter {
    * Register a new run. Returns a unique run token.
    * The run token is embedded in the hook URL for per-run routing.
    */
-  registerRun(tabId: string, requestId: string, sessionId: string | null): string {
+  registerRun(tabId: string, requestId: string, sessionId: string | null, permissionMode?: string): string {
     const runToken = randomUUID()
-    this.runTokens.set(runToken, { tabId, requestId, sessionId })
+    this.runTokens.set(runToken, { tabId, requestId, sessionId, permissionMode })
     log(`Registered run: token=${runToken.substring(0, 8)}… tab=${tabId.substring(0, 8)}…`)
     return runToken
   }
@@ -339,6 +345,14 @@ export class PermissionServer extends EventEmitter {
     if (filePath) {
       try { unlinkSync(filePath) } catch {}
       this.settingsFiles.delete(runToken)
+    }
+
+    // C3: Clean up scoped-allow entries associated with this run's session
+    if (reg.sessionId) {
+      const prefix = `session:${reg.sessionId}:`
+      for (const key of this.scopedAllows) {
+        if (key.startsWith(prefix)) this.scopedAllows.delete(key)
+      }
     }
 
     this.runTokens.delete(runToken)
@@ -468,7 +482,19 @@ export class PermissionServer extends EventEmitter {
       },
     }
 
-    const dir = join(tmpdir(), 'clui-hook-config')
+    // B1: On Windows, use userData instead of tmpdir (mode flags are ignored on Win)
+    const IS_WIN = process.platform === 'win32'
+    let dir: string
+    if (IS_WIN) {
+      try {
+        const { app } = require('electron')
+        dir = join(app.getPath('userData'), 'clui-hook-config')
+      } catch {
+        dir = join(tmpdir(), 'clui-hook-config')
+      }
+    } else {
+      dir = join(tmpdir(), 'clui-hook-config')
+    }
     try { mkdirSync(dir, { recursive: true, mode: 0o700 }) } catch {}
 
     const filePath = join(dir, `clui-hook-${runToken}.json`)
@@ -586,6 +612,15 @@ export class PermissionServer extends EventEmitter {
         res.end(JSON.stringify(allowResponse(`Domain ${domain} allowed by user`)))
         return
       }
+    }
+
+    // acceptEdits mode: auto-approve file edits without user interaction
+    if (registration.permissionMode === 'acceptEdits' &&
+        ['Edit', 'Write', 'MultiEdit'].includes(toolName)) {
+      if (DEBUG) log(`Auto-allowing ${toolName} (acceptEdits mode)`)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(allowResponse('Auto-approved by acceptEdits mode')))
+      return
     }
 
     // Auto-approve safe (read-only) Bash commands without prompting

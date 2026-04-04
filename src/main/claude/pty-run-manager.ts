@@ -536,7 +536,7 @@ export class PtyRunManager extends EventEmitter {
     // ─── Permission phase: collecting detection context ───
     if (handle.permissionPhase === 'detecting' || handle.permissionPhase === 'idle') {
       this._checkPermissionInBuffer(requestId, handle, cleaned)
-      if (handle.permissionPhase === 'waiting_user') {
+      if ((handle.permissionPhase as string) === 'waiting_user') {
         return // Permission prompt detected and emitted
       }
     }

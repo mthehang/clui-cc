@@ -98,10 +98,31 @@ function normalizeStreamEvent(event: StreamEvent): NormalizedEvent[] {
     }
 
     case 'message_start':
-    case 'message_delta':
     case 'message_stop':
       // These are structural events — the assembled `assistant` event handles message completion
       return []
+
+    case 'message_delta': {
+      // message_delta carries context_management data (context window usage) from Claude CLI.
+      // This is the primary source of context fill %, auto-compaction threshold, etc.
+      const md = sub as { type: 'message_delta'; delta: { stop_reason: string | null }; usage?: unknown; context_management?: { context_window_used?: number; context_window_budget?: number; auto_compact_at?: number; [key: string]: unknown } }
+      const cm = md.context_management
+      if (cm) {
+        // Normalize context_management: tolerate varying field name conventions
+        const used = (cm.context_window_used ?? cm.input_tokens ?? cm.tokens_used ?? 0) as number
+        const budget = (cm.context_window_budget ?? cm.context_window ?? cm.max_tokens ?? 0) as number
+        const autoCompactAt = (cm.auto_compact_at ?? cm.auto_compact_threshold) as number | undefined
+        if (used > 0 || budget > 0) {
+          return [{
+            type: 'context_window',
+            used,
+            budget,
+            ...(autoCompactAt != null ? { autoCompactAt } : {}),
+          }]
+        }
+      }
+      return []
+    }
 
     default:
       return []

@@ -69,8 +69,12 @@ export class ControlPlane extends EventEmitter {
   private initRequestIds = new Set<string>()
   /** Permission hook server for PreToolUse HTTP hooks */
   private permissionServer: PermissionServer
-  /** Per-run tokens: requestId → runToken (for cleanup on exit/error) */
+  /** Per-run tokens: requestId → runToken (PTY runs only) */
   private runTokens = new Map<string, string>()
+  /** Per-tab persistent tokens: tabId → runToken (stream-json keepalive runs, reused across turns) */
+  private tabRunTokens = new Map<string, string>()
+  /** Per-tab persistent settings file paths: tabId → path (stable across turns in same process) */
+  private tabSettingsPaths = new Map<string, string>()
   /** Global permission mode: 'ask' shows cards, 'auto' auto-approves, 'bypass' bypasses all */
   private permissionMode: 'plan' | 'ask' | 'acceptEdits' | 'auto' | 'dontAsk' | 'bypass' = 'ask'
   /** Resolves when the permission server is ready (or failed). Dispatch awaits this. */
@@ -169,14 +173,16 @@ export class ControlPlane extends EventEmitter {
     })
 
     this.runManager.on('exit', (requestId: string, code: number | null, signal: string | null, sessionId: string | null) => {
-      // Clean up per-run token
-      const runToken = this.runTokens.get(requestId)
-      if (runToken) {
-        this.permissionServer.unregisterRun(runToken)
-        this.runTokens.delete(requestId)
-      }
-
+      // Clean up per-tab token (stream-json keepalive runs — process actually died)
       const tabId = this._findTabByRequest(requestId)
+      if (tabId) {
+        const tabRunToken = this.tabRunTokens.get(tabId)
+        if (tabRunToken) {
+          this.permissionServer.unregisterRun(tabRunToken)
+          this.tabRunTokens.delete(tabId)
+          this.tabSettingsPaths.delete(tabId)
+        }
+      }
 
       // Always clean up inflight promise, even if tab was already closed.
       // This prevents leaked promises when closeTab() races with process exit.
@@ -233,14 +239,16 @@ export class ControlPlane extends EventEmitter {
     })
 
     this.runManager.on('error', (requestId: string, err: Error) => {
-      // Clean up per-run token
-      const runToken = this.runTokens.get(requestId)
-      if (runToken) {
-        this.permissionServer.unregisterRun(runToken)
-        this.runTokens.delete(requestId)
-      }
-
+      // Clean up per-tab token (stream-json keepalive runs use tabRunTokens)
       const tabId = this._findTabByRequest(requestId)
+      if (tabId) {
+        const tabRunToken = this.tabRunTokens.get(tabId)
+        if (tabRunToken) {
+          this.permissionServer.unregisterRun(tabRunToken)
+          this.tabRunTokens.delete(tabId)
+          this.tabSettingsPaths.delete(tabId)
+        }
+      }
 
       // Always clean up inflight even if tab is gone
       const inflight = this.inflightRequests.get(requestId)
@@ -281,6 +289,64 @@ export class ControlPlane extends EventEmitter {
       if (inflight) {
         inflight.reject(err)
         this.inflightRequests.delete(requestId)
+      }
+    })
+
+    // ─── Keepalive: turn completed, process stays alive ───
+    // Fired by RunManager when a 'result' event arrives and the process was NOT killed.
+    this.runManager.on('turn-complete', (requestId: string, _code: number | null, _signal: string | null, sessionId: string | null) => {
+      const tabId = this._findTabByRequest(requestId)
+      const inflight = this.inflightRequests.get(requestId)
+
+      if (!tabId || !this.tabs.get(tabId)) {
+        // Tab was closed — just resolve orphaned promise
+        if (inflight) {
+          inflight.resolve()
+          this.inflightRequests.delete(requestId)
+        }
+        return
+      }
+
+      const tab = this.tabs.get(tabId)!
+      tab.activeRequestId = null
+      // tab.runPid intentionally NOT cleared — keepalive process is still running
+
+      if (sessionId) tab.claudeSessionId = sessionId
+
+      // Init request: silently transition to idle
+      if (this.initRequestIds.has(requestId)) {
+        this.initRequestIds.delete(requestId)
+        this._setTabStatus(tabId, 'idle')
+        if (inflight) {
+          inflight.resolve()
+          this.inflightRequests.delete(requestId)
+        }
+        this._processQueue(tabId)
+        return
+      }
+
+      this._setTabStatus(tabId, 'completed')
+
+      if (inflight) {
+        inflight.resolve()
+        this.inflightRequests.delete(requestId)
+      }
+
+      this._processQueue(tabId)
+    })
+
+    // ─── Keepalive: process died while idle between turns ───
+    // Tab self-heals on next dispatch (fresh spawn). No status change needed
+    // since the tab was already in 'completed' state.
+    this.runManager.on('tab-process-died', (tabId: string | null, code: number | null, signal: string | null) => {
+      if (!tabId) return
+      log(`Tab process died between turns: tab=${tabId.substring(0, 8)} code=${code} signal=${signal}`)
+      // Clean up stale per-tab token — next dispatch will register a new one
+      const tabRunToken = this.tabRunTokens.get(tabId)
+      if (tabRunToken) {
+        this.permissionServer.unregisterRun(tabRunToken)
+        this.tabRunTokens.delete(tabId)
+        this.tabSettingsPaths.delete(tabId)
       }
     })
   }
@@ -458,9 +524,10 @@ export class ControlPlane extends EventEmitter {
     this.initRequestIds.add(requestId)
 
     this.submitPrompt(tabId, requestId, {
-      prompt: 'hi',
+      prompt: '.',
       projectPath: process.cwd(),
       maxTurns: 1,
+      skipSystemHint: true,
     }).catch((err) => {
       this.initRequestIds.delete(requestId)
       log(`Init session failed for tab ${tabId}: ${(err as Error).message}`)
@@ -476,6 +543,15 @@ export class ControlPlane extends EventEmitter {
     if (!tab) return
     log(`Resetting session for tab ${tabId} (was: ${tab.claudeSessionId})`)
     tab.claudeSessionId = null
+    // Force-terminate the live keepalive process — next dispatch spawns fresh
+    this.runManager.terminateTabProcess(tabId)
+    // Clean up stale per-tab token; new process will get a new one
+    const tabRunToken = this.tabRunTokens.get(tabId)
+    if (tabRunToken) {
+      this.permissionServer.unregisterRun(tabRunToken)
+      this.tabRunTokens.delete(tabId)
+      this.tabSettingsPaths.delete(tabId)
+    }
   }
 
   /**
@@ -514,6 +590,17 @@ export class ControlPlane extends EventEmitter {
       }
       return true
     })
+
+    // Gracefully close the keepalive process (stdin close → clean exit)
+    this.runManager.closeTabProcess(tabId)
+
+    // Clean up per-tab token — process is going away
+    const tabRunToken = this.tabRunTokens.get(tabId)
+    if (tabRunToken) {
+      this.permissionServer.unregisterRun(tabRunToken)
+      this.tabRunTokens.delete(tabId)
+      this.tabSettingsPaths.delete(tabId)
+    }
 
     this.tabs.delete(tabId)
     log(`Tab closed: ${tabId}`)
@@ -597,14 +684,26 @@ export class ControlPlane extends EventEmitter {
       options = { ...options, sessionId: tab.claudeSessionId }
     }
 
-    // Inject global permission mode into run options
-    options = { ...options, permissionMode: this.permissionMode }
+    // Inject global permission mode if not explicitly overridden
+    if (!options.permissionMode) {
+      options.permissionMode = this.permissionMode
+    }
 
-    // Per-run token lifecycle: register run, generate per-run settings file
+    // Per-tab token lifecycle: register once per process, reuse across keepalive turns.
+    // On first dispatch (or after process death + cleanup), register a fresh token.
+    // On keepalive turns, the existing token and settings file are reused.
     if (this.permissionServer.getPort()) {
-      const runToken = this.permissionServer.registerRun(tabId, requestId, options.sessionId || null)
-      this.runTokens.set(requestId, runToken)
-      const hookSettingsPath = this.permissionServer.generateSettingsFile(runToken)
+      let runToken = this.tabRunTokens.get(tabId)
+      let hookSettingsPath = this.tabSettingsPaths.get(tabId)
+
+      if (!runToken || !hookSettingsPath) {
+        // First spawn or after process death — register new token and settings file
+        runToken = this.permissionServer.registerRun(tabId, requestId, options.sessionId || null, options.permissionMode)
+        this.tabRunTokens.set(tabId, runToken)
+        hookSettingsPath = this.permissionServer.generateSettingsFile(runToken)
+        this.tabSettingsPaths.set(tabId, hookSettingsPath)
+      }
+
       options = { ...options, hookSettingsPath }
     }
 
@@ -629,7 +728,7 @@ export class ControlPlane extends EventEmitter {
         this.ptyRuns.add(requestId)
         pid = handle.pid
       } else {
-        const handle = this.runManager.startRun(requestId, options)
+        const handle = this.runManager.startRun(requestId, tabId, options)
         pid = handle.pid
       }
       tab.runPid = pid
@@ -823,5 +922,8 @@ export class ControlPlane extends EventEmitter {
     for (const [tabId] of this.tabs) {
       this.closeTab(tabId)
     }
+    // Any remaining tab tokens (e.g. from tabs closed during shutdown)
+    this.tabRunTokens.clear()
+    this.tabSettingsPaths.clear()
   }
 }

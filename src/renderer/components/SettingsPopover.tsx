@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon, Microphone, Keyboard, MagnifyingGlassPlus, MagnifyingGlassMinus, ArrowCounterClockwise, Power, EyeSlash, Translate, NotePencil, CheckCircle, DownloadSimple, Trash, CaretRight, CircleNotch, ArrowsClockwise, Browsers } from '@phosphor-icons/react'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, Microphone, Keyboard, MagnifyingGlassPlus, MagnifyingGlassMinus, ArrowCounterClockwise, Power, EyeSlash, Translate, NotePencil, CheckCircle, DownloadSimple, Trash, CaretRight, CircleNotch, ArrowsClockwise, Browsers, Sparkle, Sliders } from '@phosphor-icons/react'
 import type { UpdateStatus } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
@@ -12,21 +12,20 @@ import { useT, AVAILABLE_LANGUAGES } from '../i18n'
 function RowToggle({
   checked,
   onChange,
-  colors,
   label,
 }: {
   checked: boolean
   onChange: (next: boolean) => void
-  colors: ReturnType<typeof useColors>
-  label: string
+  label?: string
 }) {
+  const colors = useColors()
   return (
     <button
       type="button"
       aria-label={label}
       aria-pressed={checked}
       onClick={() => onChange(!checked)}
-      className="relative w-9 h-5 rounded-full transition-colors"
+      className="relative shrink-0 w-9 h-5 rounded-full transition-colors"
       style={{
         background: checked ? colors.accent : colors.surfaceSecondary,
         border: `1px solid ${checked ? colors.accent : colors.containerBorder}`,
@@ -252,7 +251,6 @@ function StartupSection({ colors }: { colors: ReturnType<typeof useColors> }) {
               setAutoStart(next)
               window.clui.saveSettings({ autoStart: next })
             }}
-            colors={colors}
             label={t('settings.startup.auto')}
           />
         </div>
@@ -264,7 +262,6 @@ function StartupSection({ colors }: { colors: ReturnType<typeof useColors> }) {
               setStartHidden(next)
               window.clui.saveSettings({ startHidden: next })
             }}
-            colors={colors}
             label={t('settings.startup.hidden')}
           />
         </div>
@@ -607,6 +604,208 @@ function WhisperSection({ colors, micDeviceId, micDevices, setMicDeviceId }: {
 
 /* ─── Global Rules ─── */
 
+/* ─── Ollama Prompt Enhancer settings ─── */
+
+const OLLAMA_MODELS = [
+  { id: 'qwen3:1.7b',  label: 'Qwen3 1.7B',   sizeMb: 1400, note: 'Recommended — best quality/speed' },
+  { id: 'qwen3:4b',    label: 'Qwen3 4B',     sizeMb: 2500, note: 'Best quality under 3 GB' },
+  { id: 'llama3.2:3b', label: 'Llama 3.2 3B', sizeMb: 2000, note: 'No thinking-mode overhead' },
+] as const
+
+function OllamaSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const ollamaEnabled = useSessionStore((s) => s.ollamaEnabled)
+  const ollamaModel   = useSessionStore((s) => s.ollamaModel)
+  const setOllamaEnabled = useSessionStore((s) => s.setOllamaEnabled)
+  const setOllamaModel   = useSessionStore((s) => s.setOllamaModel)
+
+  const [status, setStatus] = useState<{ running: boolean; version: string | null } | null>(null)
+  const [installedModels, setInstalledModels] = useState<string[]>([])
+  const [downloading, setDownloading] = useState<string | null>(null)
+  const [downloadPct, setDownloadPct] = useState(0)
+  const [deleting, setDeleting] = useState<string | null>(null)
+
+  const refreshStatus = useCallback(() => {
+    window.clui.ollamaCheck().then(setStatus).catch(() => setStatus({ running: false, version: null }))
+    window.clui.ollamaListModels().then((r) => setInstalledModels(r.installed)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (ollamaEnabled) refreshStatus()
+  }, [ollamaEnabled, refreshStatus])
+
+  // Subscribe to pull progress events
+  useEffect(() => {
+    const unsub = window.clui.onOllamaPullProgress((model, pct, _status) => {
+      if (model === downloading) setDownloadPct(pct)
+    })
+    return unsub
+  }, [downloading])
+
+  const handleInstall = useCallback(async (modelId: string) => {
+    if (!status?.running) { refreshStatus(); return }
+    setDownloading(modelId)
+    setDownloadPct(0)
+    try {
+      const result = await window.clui.ollamaPullModel(modelId)
+      if (result.ok) {
+        setOllamaModel(modelId)
+        refreshStatus()
+      }
+    } finally {
+      setDownloading(null)
+      setDownloadPct(0)
+    }
+  }, [status, setOllamaModel, refreshStatus])
+
+  const handleDelete = useCallback(async (modelId: string) => {
+    setDeleting(modelId)
+    try {
+      await window.clui.ollamaDeleteModel(modelId)
+      refreshStatus()
+      if (ollamaModel === modelId) {
+        const remaining = OLLAMA_MODELS.find((m) => m.id !== modelId)
+        if (remaining) setOllamaModel(remaining.id)
+      }
+    } finally {
+      setDeleting(null)
+    }
+  }, [ollamaModel, setOllamaModel, refreshStatus])
+
+  const selectStyle = {
+    background: colors.surfacePrimary,
+    color: colors.textPrimary,
+    border: `1px solid ${colors.containerBorder}`,
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Enable toggle */}
+      <div className="flex items-center justify-between">
+        <span className="text-[11px]" style={{ color: colors.textSecondary }}>Enable Prompt Enhancer</span>
+        <RowToggle
+          checked={ollamaEnabled}
+          onChange={(v) => { setOllamaEnabled(v); if (v) refreshStatus() }}
+          label="Enable Ollama Prompt Enhancer"
+        />
+      </div>
+
+      {ollamaEnabled && (
+        <>
+          {/* Ollama status */}
+          <div className="flex items-center justify-between">
+            <span className="text-[11px]" style={{ color: colors.textSecondary }}>Ollama status</span>
+            <div className="flex items-center gap-2">
+              {status === null ? (
+                <span className="text-[10px]" style={{ color: colors.textTertiary }}>Checking…</span>
+              ) : status.running ? (
+                <span className="text-[10px]" style={{ color: colors.accent }}>
+                  ● Running{status.version ? ` v${status.version}` : ''}
+                </span>
+              ) : (
+                <>
+                  <span className="text-[10px]" style={{ color: colors.statusError }}>● Not running</span>
+                  <button
+                    onClick={() => window.clui.openExternal('https://ollama.ai')}
+                    className="text-[10px] underline"
+                    style={{ color: colors.textTertiary, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                  >
+                    Install Ollama ↗
+                  </button>
+                </>
+              )}
+              <button
+                onClick={refreshStatus}
+                className="flex items-center justify-center rounded"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: colors.textTertiary }}
+                title="Refresh status"
+              >
+                <ArrowsClockwise size={11} />
+              </button>
+            </div>
+          </div>
+
+          {/* Model list */}
+          <div>
+            <span className="text-[11px] block mb-1" style={{ color: colors.textSecondary }}>Models</span>
+            <div className="flex flex-col gap-0.5">
+              {OLLAMA_MODELS.map((m) => {
+                const isSelected = ollamaModel === m.id
+                const isInstalled = installedModels.some((name) => name === m.id || name.startsWith(`${m.id}:`))
+                const isDownloading = downloading === m.id
+                const isDeleting = deleting === m.id
+
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between rounded-lg px-2 py-1.5"
+                    style={{
+                      background: isSelected ? `${colors.accent}18` : colors.surfaceHover,
+                      border: isSelected ? `1px solid ${colors.accent}44` : '1px solid transparent',
+                    }}
+                  >
+                    <div
+                      className="flex-1 cursor-pointer"
+                      onClick={() => isInstalled && setOllamaModel(m.id)}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        {isSelected && isInstalled && (
+                          <CheckCircle size={10} style={{ color: colors.accent, flexShrink: 0 }} />
+                        )}
+                        <span className="text-[11px] font-medium" style={{ color: colors.textPrimary }}>{m.label}</span>
+                        <span className="text-[10px]" style={{ color: colors.textTertiary }}>{Math.round(m.sizeMb / 100) / 10} GB</span>
+                      </div>
+                      <div className="text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>{m.note}</div>
+                      {isDownloading && downloadPct > 0 && (
+                        <div className="mt-1 h-1 rounded-full overflow-hidden" style={{ background: colors.surfaceSecondary }}>
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{ width: `${downloadPct}%`, background: colors.accent }}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 ml-2">
+                      {isDownloading ? (
+                        <div className="flex items-center gap-1">
+                          <CircleNotch size={11} className="animate-spin" style={{ color: colors.accent }} />
+                          <span className="text-[10px]" style={{ color: colors.textTertiary }}>{downloadPct}%</span>
+                        </div>
+                      ) : isDeleting ? (
+                        <CircleNotch size={11} className="animate-spin" style={{ color: colors.textTertiary }} />
+                      ) : isInstalled ? (
+                        <button
+                          onClick={() => handleDelete(m.id)}
+                          title="Remove model"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: colors.textTertiary }}
+                        >
+                          <Trash size={11} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleInstall(m.id)}
+                          title="Install model"
+                          disabled={!status?.running || !!downloading}
+                          style={{
+                            background: 'none', border: 'none', cursor: (!status?.running || !!downloading) ? 'default' : 'pointer',
+                            padding: 2, color: (!status?.running || !!downloading) ? colors.textTertiary : colors.accent,
+                          }}
+                        >
+                          <DownloadSimple size={11} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function GlobalRulesSection({ colors }: { colors: ReturnType<typeof useColors> }) {
   const t = useT()
   const [rules, setRules] = useState('')
@@ -670,7 +869,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
       {/* About */}
       <div className="flex flex-col gap-1">
         <span className="text-[12px] font-semibold" style={{ color: colors.textPrimary }}>Clui CC</span>
-        <span className="text-[10px]" style={{ color: colors.textTertiary }}>Command Line User Interface for Claude Code</span>
+        <span className="text-[10px]" style={{ color: colors.textTertiary }}>{t('settings.update.about')}</span>
         <div className="flex items-center gap-2 mt-0.5">
           <a
             href="#"
@@ -687,7 +886,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             className="text-[10px]"
             style={{ color: colors.accent, cursor: 'pointer' }}
           >
-            Report Issue
+            {t('settings.update.reportIssue')}
           </a>
         </div>
       </div>
@@ -696,7 +895,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
 
       {/* Version & Updates */}
       <div className="flex items-center justify-between">
-        <span className="text-[11px]" style={{ color: colors.textSecondary }}>Version</span>
+        <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.version')}</span>
         <span className="text-[11px] font-mono" style={{ color: colors.textTertiary }}>v{version}</span>
       </div>
 
@@ -716,13 +915,13 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
 
       {status.state === 'available' && (
         <div className="flex flex-col gap-1">
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>v{status.version} {t('settings.update.availableSuffix', 'available')}</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>v{status.version} {t('settings.update.availableSuffix')}</span>
           <button
             onClick={() => window.clui.downloadUpdate()}
             className="text-[11px] px-2 py-1 rounded-lg"
             style={{ background: colors.accent, color: '#fff', cursor: 'pointer' }}
           >
-            {t('settings.update.openDownload', 'Open Download Page')}
+            {t('settings.update.openDownload')}
           </button>
         </div>
       )}
@@ -730,7 +929,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
       {status.state === 'downloaded' && (
         <div className="flex flex-col gap-1">
           <CheckCircle size={12} weight="fill" style={{ color: colors.accent }} />
-          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.opened', 'Download page opened in browser')}</span>
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.update.opened')}</span>
         </div>
       )}
 
@@ -742,7 +941,7 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
             className="text-[10px] px-2 py-0.5 rounded"
             style={{ background: colors.surfacePrimary, color: colors.textSecondary, border: `1px solid ${colors.containerBorder}`, cursor: 'pointer' }}
           >
-            Retry
+            {t('settings.update.retry')}
           </button>
         </div>
       )}
@@ -762,27 +961,101 @@ function UpdateSection({ colors }: { colors: ReturnType<typeof useColors> }) {
 
 /* ─── Window Margins ─── */
 
+const OFFSET_STEP = 10
+
 function WindowMarginsSection({ colors }: { colors: ReturnType<typeof useColors> }) {
-  const [margins, setMargins] = useState({ top: 0, bottom: 0, left: 0, right: 0 })
+  const t = useT()
+  const offsetY = useSessionStore((s) => s.uiOffsetY)
+  const offsetX = useSessionStore((s) => s.uiOffsetX)
+  const setUiOffset = useSessionStore((s) => s.setUiOffset)
 
-  useEffect(() => {
-    window.clui.getSettings().then((s) => {
-      setMargins({
-        top: s.windowMarginTop || 0,
-        bottom: s.windowMarginBottom || 0,
-        left: s.windowMarginLeft || 0,
-        right: s.windowMarginRight || 0,
-      })
-    }).catch(() => {})
-  }, [])
-
-  const update = (key: 'top' | 'bottom' | 'left' | 'right', value: number) => {
-    const v = Math.max(0, Math.round(value))
-    setMargins((prev) => ({ ...prev, [key]: v }))
-    const settingKey = `windowMargin${key.charAt(0).toUpperCase() + key.slice(1)}` as
-      'windowMarginTop' | 'windowMarginBottom' | 'windowMarginLeft' | 'windowMarginRight'
-    window.clui.saveSettings({ [settingKey]: v })
+  const move = (dx: number, dy: number) => {
+    const newX = offsetX + dx
+    const newY = Math.max(0, offsetY + dy)
+    setUiOffset(newX, newY)
   }
+
+  const reset = () => setUiOffset(0, 0)
+  const hasOffset = offsetX !== 0 || offsetY !== 0
+
+  const btn = (content: string, onClick: () => void, title: string) => (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        background: colors.surfacePrimary,
+        color: colors.textSecondary,
+        border: `1px solid ${colors.containerBorder}`,
+        borderRadius: 6,
+        width: 32,
+        height: 32,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        fontSize: 14,
+        flexShrink: 0,
+      }}
+    >
+      {content}
+    </button>
+  )
+
+  return (
+    <div className="flex flex-col gap-3">
+      <span className="text-[10px]" style={{ color: colors.textMuted }}>
+        {t('settings.margins.hint')}
+      </span>
+
+      {/* D-pad */}
+      <div className="flex flex-col items-center gap-1">
+        <div className="flex justify-center">
+          {btn('↑', () => move(0, OFFSET_STEP), t('settings.margins.up'))}
+        </div>
+        <div className="flex items-center gap-2">
+          {btn('←', () => move(-OFFSET_STEP, 0), t('settings.margins.left'))}
+          <div className="text-center" style={{ minWidth: 72 }}>
+            <div className="text-[11px] font-mono" style={{ color: colors.textSecondary }}>
+              {offsetX > 0 ? `+${offsetX}` : offsetX}px · {offsetY}px
+            </div>
+            <div className="text-[10px]" style={{ color: colors.textMuted }}>
+              X · Y
+            </div>
+          </div>
+          {btn('→', () => move(OFFSET_STEP, 0), t('settings.margins.right'))}
+        </div>
+        <div className="flex justify-center">
+          {btn('↓', () => move(0, -OFFSET_STEP), t('settings.margins.down'))}
+        </div>
+      </div>
+
+      {hasOffset && (
+        <button
+          onClick={reset}
+          className="text-[10px] text-center"
+          style={{ color: colors.accent, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+        >
+          {t('settings.margins.reset')}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/* ─── Advanced section (token economy controls) ─── */
+
+function AdvancedSection({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const maxTurns = useSessionStore((s) => s.maxTurns)
+  const setMaxTurns = useSessionStore((s) => s.setMaxTurns)
+  const warmupEnabled = useSessionStore((s) => s.warmupEnabled)
+  const setWarmupEnabled = useSessionStore((s) => s.setWarmupEnabled)
+  const systemHintEnabled = useSessionStore((s) => s.systemHintEnabled)
+  const setSystemHintEnabled = useSessionStore((s) => s.setSystemHintEnabled)
+  const autoCompactThreshold = useSessionStore((s) => s.autoCompactThreshold)
+  const setAutoCompactThreshold = useSessionStore((s) => s.setAutoCompactThreshold)
+  const maxBudgetUsd = useSessionStore((s) => s.maxBudgetUsd)
+  const setMaxBudgetUsd = useSessionStore((s) => s.setMaxBudgetUsd)
+  const t = useT()
 
   const inputStyle = {
     background: colors.surfacePrimary,
@@ -791,24 +1064,68 @@ function WindowMarginsSection({ colors }: { colors: ReturnType<typeof useColors>
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <span className="text-[10px]" style={{ color: colors.textMuted }}>
-        Adjust if using custom taskbars (e.g. MyDock Finder)
-      </span>
-      <div className="grid grid-cols-2 gap-2">
-        {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
-          <div key={side} className="flex items-center justify-between gap-2">
-            <span className="text-[11px] capitalize" style={{ color: colors.textSecondary }}>{side}</span>
-            <input
-              type="number"
-              min={0}
-              value={margins[side]}
-              onChange={(e) => update(side, parseInt(e.target.value) || 0)}
-              className="w-14 text-[11px] rounded px-1.5 py-0.5 text-right outline-none"
-              style={inputStyle}
-            />
-          </div>
-        ))}
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.advanced.maxTurns')}</span>
+          <span className="text-[10px]" style={{ color: colors.textMuted }}>{t('settings.advanced.maxTurns.hint')}</span>
+        </div>
+        <input
+          type="number"
+          min={1}
+          max={200}
+          value={maxTurns}
+          onChange={(e) => setMaxTurns(parseInt(e.target.value) || 25)}
+          className="w-16 text-[11px] rounded px-1.5 py-0.5 text-right outline-none"
+          style={inputStyle}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.advanced.autoCompact')}</span>
+          <span className="text-[10px]" style={{ color: colors.textMuted }}>{t('settings.advanced.autoCompact.hint')}</span>
+        </div>
+        <input
+          type="number"
+          min={50}
+          max={99}
+          value={autoCompactThreshold}
+          onChange={(e) => setAutoCompactThreshold(parseInt(e.target.value) || 80)}
+          className="w-16 text-[11px] rounded px-1.5 py-0.5 text-right outline-none"
+          style={inputStyle}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.advanced.budget')}</span>
+          <span className="text-[10px]" style={{ color: colors.textMuted }}>{t('settings.advanced.budget.hint')}</span>
+        </div>
+        <input
+          type="number"
+          min={0}
+          step={0.1}
+          value={maxBudgetUsd ?? 0}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value)
+            setMaxBudgetUsd(v > 0 ? v : null)
+          }}
+          className="w-16 text-[11px] rounded px-1.5 py-0.5 text-right outline-none"
+          style={inputStyle}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.advanced.systemHint')}</span>
+          <span className="text-[10px]" style={{ color: colors.textMuted }}>{t('settings.advanced.systemHint.hint')}</span>
+        </div>
+        <RowToggle checked={systemHintEnabled} onChange={setSystemHintEnabled} label="GUI context hint" />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px]" style={{ color: colors.textSecondary }}>{t('settings.advanced.warmup')}</span>
+          <span className="text-[10px]" style={{ color: colors.textMuted }}>{t('settings.advanced.warmup.hint')}</span>
+        </div>
+        <RowToggle checked={warmupEnabled} onChange={setWarmupEnabled} label="Pre-warm sessions" />
       </div>
     </div>
   )
@@ -971,10 +1288,7 @@ export function SettingsPopover() {
                 </div>
                 <RowToggle
                   checked={expandedUI}
-                  onChange={(next) => {
-                    setExpandedUI(next)
-                  }}
-                  colors={colors}
+                  onChange={(next) => { setExpandedUI(next) }}
                   label="Toggle full width panel"
                 />
               </div>
@@ -994,7 +1308,6 @@ export function SettingsPopover() {
                 <RowToggle
                   checked={themeMode === 'dark'}
                   onChange={(next) => setThemeMode(next ? 'dark' : 'light')}
-                  colors={colors}
                   label="Toggle dark theme"
                 />
               </div>
@@ -1014,7 +1327,6 @@ export function SettingsPopover() {
                 <RowToggle
                   checked={soundEnabled}
                   onChange={setSoundEnabled}
-                  colors={colors}
                   label="Toggle notification sound"
                 />
               </div>
@@ -1099,14 +1411,26 @@ export function SettingsPopover() {
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
+            <CollapsibleSection colors={colors} icon={<Sparkle size={14} style={{ color: colors.textTertiary }} />} label={t('settings.ollama')}>
+              <OllamaSection colors={colors} />
+            </CollapsibleSection>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
             <CollapsibleSection colors={colors} icon={<Power size={14} style={{ color: colors.textTertiary }} />} label={t('settings.startup')}>
               <StartupSection colors={colors} />
             </CollapsibleSection>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />
 
-            <CollapsibleSection colors={colors} icon={<Browsers size={14} style={{ color: colors.textTertiary }} />} label="Window Margins">
+            <CollapsibleSection colors={colors} icon={<Browsers size={14} style={{ color: colors.textTertiary }} />} label={t('settings.margins')}>
               <WindowMarginsSection colors={colors} />
+            </CollapsibleSection>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            <CollapsibleSection colors={colors} icon={<Sliders size={14} style={{ color: colors.textTertiary }} />} label={t('settings.advanced')}>
+              <AdvancedSection colors={colors} />
             </CollapsibleSection>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />

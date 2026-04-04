@@ -366,7 +366,7 @@ ipcMain.on(IPC.RESET_TAB_SESSION, (_event, tabId: string) => {
 
 ipcMain.handle(IPC.PROMPT, async (_event, { tabId, requestId, options }: { tabId: string; requestId: string; options: RunOptions }) => {
   if (DEBUG_MODE) {
-    log(`IPC PROMPT: tab=${tabId} req=${requestId} prompt="${options.prompt.substring(0, 100)}"`)
+    log(`IPC PROMPT: tab=${tabId} req=${requestId} prompt="${options?.prompt?.substring(0, 100)}"`)
   } else {
     log(`IPC PROMPT: tab=${tabId} req=${requestId}`)
   }
@@ -376,6 +376,9 @@ ipcMain.handle(IPC.PROMPT, async (_event, { tabId, requestId, options }: { tabId
   }
   if (!requestId) {
     throw new Error('No requestId provided — prompt rejected')
+  }
+  if (options == null) {
+    throw new Error('options is null/undefined in PROMPT handler — IPC payload malformed')
   }
 
   try {

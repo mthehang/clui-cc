@@ -111,6 +111,20 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     'settings.update.downloading': 'Downloading...',
     'settings.update.install': 'Install & restart',
     'settings.update.error': 'Update error',
+    'settings.update.version': 'Version',
+    'settings.update.reportIssue': 'Report Issue',
+    'settings.update.about': 'Command Line User Interface for Claude Code',
+    'settings.update.availableSuffix': 'is available',
+    'settings.update.openDownload': 'Download update',
+    'settings.update.opened': 'Download started',
+    'settings.update.retry': 'Retry',
+    'settings.margins.reset': 'Reset to default position',
+    'settings.margins.up': 'Move up',
+    'settings.margins.down': 'Move down',
+    'settings.margins.left': 'Move left',
+    'settings.margins.right': 'Move right',
+    'settings.margins.offset': 'Offset',
+    'general.retry': 'Retry',
 
     // ─── History ───
     'history.title': 'Recent Sessions',
@@ -186,6 +200,32 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     'mode.auto': 'Auto',
     'mode.dontAsk': "Don't Ask",
     'mode.bypass': 'Bypass',
+
+    // ─── Window Margins ───
+    'settings.margins': 'Window Margins',
+    'settings.margins.hint': 'Adjust if using custom taskbars (e.g. MyDock). Each click moves 10px.',
+
+    // ─── Advanced ───
+    'settings.advanced': 'Advanced',
+    'settings.advanced.maxTurns': 'Max turns per task',
+    'settings.advanced.maxTurns.hint': 'Increase for long agent tasks (default: 25)',
+    'settings.advanced.autoCompact': 'Auto-compact at (%)',
+    'settings.advanced.autoCompact.hint': 'Compact before hitting limit (terminal default: 95%)',
+    'settings.advanced.budget': 'Budget cap (USD)',
+    'settings.advanced.budget.hint': 'Stop agent loops when cost exceeds limit (0 = unlimited)',
+    'settings.advanced.systemHint': 'GUI context hint',
+    'settings.advanced.systemHint.hint': 'Tells Claude to use rich markdown (~50 tokens/session)',
+    'settings.advanced.warmup': 'Pre-warm sessions',
+    'settings.advanced.warmup.hint': 'Faster first response, costs 1 API call per tab',
+
+    // ─── Prompt Enhancer (Ollama) ───
+    'settings.ollama': 'Prompt Enhancer (Ollama)',
+    'settings.ollama.enable': 'Enable prompt enhancer',
+    'settings.ollama.status.running': 'Ollama running',
+    'settings.ollama.status.notRunning': 'Ollama not detected',
+    'settings.ollama.model': 'Model',
+    'settings.ollama.install': 'Install Ollama ↗',
+    'settings.ollama.refresh': 'Refresh',
   },
 
   'pt-BR': {
@@ -291,6 +331,20 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     'settings.update.downloading': 'Baixando...',
     'settings.update.install': 'Instalar e reiniciar',
     'settings.update.error': 'Erro na atualização',
+    'settings.update.version': 'Versão',
+    'settings.update.reportIssue': 'Reportar Problema',
+    'settings.update.about': 'Interface de linha de comando para Claude Code',
+    'settings.update.availableSuffix': 'disponível',
+    'settings.update.openDownload': 'Baixar atualização',
+    'settings.update.opened': 'Download iniciado',
+    'settings.update.retry': 'Tentar novamente',
+    'settings.margins.reset': 'Restaurar posição padrão',
+    'settings.margins.up': 'Mover para cima',
+    'settings.margins.down': 'Mover para baixo',
+    'settings.margins.left': 'Mover para esquerda',
+    'settings.margins.right': 'Mover para direita',
+    'settings.margins.offset': 'Deslocamento',
+    'general.retry': 'Tentar novamente',
 
     // ─── Histórico ───
     'history.title': 'Sessões Recentes',
@@ -366,6 +420,32 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     'mode.auto': 'Automático',
     'mode.dontAsk': 'Não Perguntar',
     'mode.bypass': 'Ignorar',
+
+    // ─── Margens da Janela ───
+    'settings.margins': 'Margens da Janela',
+    'settings.margins.hint': 'Ajuste se usar barras de tarefas personalizadas (ex: MyDock). Cada clique move 10px.',
+
+    // ─── Avançado ───
+    'settings.advanced': 'Avançado',
+    'settings.advanced.maxTurns': 'Máx. turnos por tarefa',
+    'settings.advanced.maxTurns.hint': 'Aumente para tarefas longas de agente (padrão: 25)',
+    'settings.advanced.autoCompact': 'Auto-compactar em (%)',
+    'settings.advanced.autoCompact.hint': 'Compacta antes de atingir o limite (padrão terminal: 95%)',
+    'settings.advanced.budget': 'Limite de gastos (USD)',
+    'settings.advanced.budget.hint': 'Para loops de agente quando o custo ultrapassa o limite (0 = ilimitado)',
+    'settings.advanced.systemHint': 'Dica de contexto GUI',
+    'settings.advanced.systemHint.hint': 'Instrui o Claude a usar markdown rico (~50 tokens/sessão)',
+    'settings.advanced.warmup': 'Pré-aquecer sessões',
+    'settings.advanced.warmup.hint': 'Primeira resposta mais rápida, custa 1 chamada de API por aba',
+
+    // ─── Melhorador de Prompt (Ollama) ───
+    'settings.ollama': 'Melhorador de Prompt (Ollama)',
+    'settings.ollama.enable': 'Ativar melhorador de prompt',
+    'settings.ollama.status.running': 'Ollama rodando',
+    'settings.ollama.status.notRunning': 'Ollama não detectado',
+    'settings.ollama.model': 'Modelo',
+    'settings.ollama.install': 'Instalar Ollama ↗',
+    'settings.ollama.refresh': 'Atualizar',
   },
 }
 
