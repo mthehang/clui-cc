@@ -113,7 +113,7 @@ export class RunManager extends EventEmitter {
     if (!handle.process.stdin || handle.process.stdin.destroyed) return false
     if (handle.process.exitCode !== null) return false
     if (handle.isTurnActive) return false  // Shouldn't happen, but safe
-    if (options.compact) return false       // Compact requires respawn with --compact flag
+    // Compact is handled via /compact stdin message — no need to force a new spawn
     const model = options.model || null
     if (model !== handle.spawnModel) return false
     const perm = options.permissionMode || 'ask'
@@ -130,6 +130,14 @@ export class RunManager extends EventEmitter {
     handle.currentRequestId = newRequestId
     handle.isTurnActive = true
     this.activeRuns.set(newRequestId, handle)
+
+    if (options.compact) {
+      const compactMsg = JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: '/compact' }] },
+      })
+      handle.process.stdin!.write(compactMsg + '\n')
+    }
 
     const userMessage = JSON.stringify({
       type: 'user',
@@ -231,9 +239,7 @@ export class RunManager extends EventEmitter {
     if (!options.sessionId && !options.skipSystemHint) {
       args.push('--append-system-prompt', CLUI_SYSTEM_HINT)
     }
-    if (options.compact) {
-      args.push('--compact')
-    }
+    // --compact does not exist in Claude CLI v2.x; compaction is triggered via /compact stdin message
 
     if (DEBUG) {
       log(`Spawning [${requestId}]: ${this.claudeBinary} ${args.join(' ')}`)
@@ -365,7 +371,14 @@ export class RunManager extends EventEmitter {
       setTimeout(() => this._finishedRuns.delete(emitId), 30000)
     })
 
-    // ─── Write first prompt ───
+    // ─── Write first prompt (optionally preceded by /compact) ───
+    if (options.compact) {
+      const compactMsg = JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: '/compact' }] },
+      })
+      child.stdin!.write(compactMsg + '\n')
+    }
     const userMessage = JSON.stringify({
       type: 'user',
       message: { role: 'user', content: [{ type: 'text', text: options.prompt }] },
