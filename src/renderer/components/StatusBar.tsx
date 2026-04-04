@@ -656,15 +656,16 @@ export function StatusBar() {
       {/* Right — context % + CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
       {(() => {
-          // Use real context_window data from message_delta if available,
-          // fall back to last-run input_tokens / hardcoded limit for older sessions.
+          // Use real context_window data when available (set by normalizer via assistant/message_delta events).
+          // Fall back to summing all token types from the last result — input_tokens alone is near-zero
+          // when caching is active; cache_read/cache_creation must be included for an accurate reading.
           const hasRealData = (tab.contextWindowBudget || 0) > 0
-          const used = hasRealData
-            ? tab.contextWindowUsed
-            : (tab.lastResult?.usage?.input_tokens ?? 0)
-          const budget = hasRealData
-            ? tab.contextWindowBudget
-            : 200_000 // Claude Sonnet/Opus default
+          const rawUsage = tab.lastResult?.usage
+          const fallbackUsed = (rawUsage?.input_tokens ?? 0)
+            + (rawUsage?.cache_read_input_tokens ?? 0)
+            + (rawUsage?.cache_creation_input_tokens ?? 0)
+          const used = hasRealData ? tab.contextWindowUsed : fallbackUsed
+          const budget = hasRealData ? tab.contextWindowBudget : 200_000
 
           // Raw % of total context used (matches CLI output)
           const rawPct = budget > 0 ? Math.min(100, (used / budget) * 100) : 0

@@ -130,10 +130,29 @@ function normalizeStreamEvent(event: StreamEvent): NormalizedEvent[] {
 }
 
 function normalizeAssistant(event: AssistantEvent): NormalizedEvent[] {
-  return [{
+  const results: NormalizedEvent[] = [{
     type: 'task_update',
     message: event.message,
   }]
+
+  // Extract context window usage from message.usage.
+  // Total context = input_tokens (non-cached) + cache_read_input_tokens + cache_creation_input_tokens.
+  // This is the reliable source — context_management in message_delta is not always emitted by the CLI.
+  const usage = event.message?.usage
+  if (usage) {
+    const used = (usage.input_tokens || 0)
+      + (usage.cache_read_input_tokens || 0)
+      + (usage.cache_creation_input_tokens || 0)
+    if (used > 0) {
+      results.push({
+        type: 'context_window',
+        used,
+        budget: 200_000, // All current Claude models have 200K context window
+      })
+    }
+  }
+
+  return results
 }
 
 function normalizeResult(event: ResultEvent): NormalizedEvent[] {
