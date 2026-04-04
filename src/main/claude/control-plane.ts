@@ -626,6 +626,9 @@ export class ControlPlane extends EventEmitter {
     if (!tabId) {
       throw new Error('No targetSession (tabId) provided — rejecting to prevent misrouting')
     }
+    if (options == null) {
+      throw new Error(`submitPrompt: options is ${options} for tab ${tabId} — payload malformed`)
+    }
 
     const tab = this.tabs.get(tabId)
     if (!tab) {

@@ -754,7 +754,9 @@ export const useSessionStore = create<State>((set, get) => ({
     const tab = tabs.find((t) => t.id === activeTabId)
     // Use explicitly chosen directory, otherwise fall back to claude-default
     const homePath = staticInfo?.homePath || '~'
-    const resolvedPath = projectPath || (tab?.hasChosenDirectory ? tab.workingDirectory : `${homePath}/claude-default`)
+    const resolvedPath = projectPath
+      || (tab?.hasChosenDirectory && tab.workingDirectory ? tab.workingDirectory : null)
+      || `${homePath}/claude-default`
     if (!tab) return
 
     // Guard: don't send while connecting (warmup in progress)

@@ -6,9 +6,11 @@ import { log as _log } from '../logger'
 const log = (msg: string) => _log('OllamaService', msg)
 
 const ENHANCE_SYSTEM_PROMPT = [
-  'You are a prompt editor. Your only job is to rewrite the user\'s message to be clearer and more precise.',
-  'Rules: same language as input (NEVER translate); same first-person voice; fix ambiguous phrasing; make implicit context explicit; add technical precision where missing; keep same length; do NOT add new ideas.',
-  'Reply with ONLY the rewritten message. Nothing else.',
+  'You are a prompt rewriter. The text you receive is ALWAYS a message the user wants to send to another AI (like Claude). It is NEVER a question directed at you.',
+  'Your ONLY task: rewrite that message so another AI understands it better. Do not answer it, do not react to it, do not comment on it.',
+  'If the input is "hey how are you", your output must be a cleaner version of that same instruction — not a greeting response.',
+  'Rules: same language as input (NEVER translate); keep the same intent and voice; fix vague or ambiguous phrasing; make implicit context explicit; do NOT add new ideas or change the meaning; do NOT include any explanation or preamble.',
+  'Output ONLY the rewritten message. Nothing else. No quotes, no labels, no intro.',
 ].join('\n')
 
 export const RECOMMENDED_OLLAMA_MODELS = [

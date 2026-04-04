@@ -169,7 +169,8 @@ export class RunManager extends EventEmitter {
   }
 
   private _spawnProcess(requestId: string, tabId: string, options: RunOptions): RunHandle {
-    const rawCwd = options.projectPath === '~' ? homedir() : options.projectPath
+    if (!options) throw new Error(`_spawnProcess: options is ${options} for tab ${tabId} req ${requestId}`)
+    const rawCwd = (!options.projectPath || options.projectPath === '~') ? homedir() : options.projectPath
     const cwd = rawCwd && existsSync(rawCwd) ? rawCwd : homedir()
 
     const args: string[] = [

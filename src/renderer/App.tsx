@@ -50,12 +50,17 @@ export default function App() {
         useSessionStore.setState((s) => ({
           tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, workingDirectory: homeDir, hasChosenDirectory: false } : t)),
         }))
-        window.clui.createTab().then(({ tabId }) => {
-          useSessionStore.setState((s) => ({
-            tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, id: tabId } : t)),
-            activeTabId: tabId,
-          }))
-        }).catch(() => {})
+        const tryCreateTab = (retries = 3): void => {
+          window.clui.createTab().then(({ tabId }) => {
+            useSessionStore.setState((s) => ({
+              tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, id: tabId } : t)),
+              activeTabId: tabId,
+            }))
+          }).catch(() => {
+            if (retries > 0) setTimeout(() => tryCreateTab(retries - 1), 300)
+          })
+        }
+        tryCreateTab()
       }
     })
   }, [])
