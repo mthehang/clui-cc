@@ -159,7 +159,7 @@ function normalizeResult(event: ResultEvent): NormalizedEvent[] {
   if (event.is_error || event.subtype === 'error') {
     return [{
       type: 'error',
-      message: event.result || 'Unknown error',
+      message: event.result || 'Session error. The session may have expired or been moved.',
       isError: true,
       sessionId: event.session_id,
     }]

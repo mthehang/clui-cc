@@ -150,11 +150,13 @@ export function InputBar() {
     if (naturalHeight <= INPUT_MAX_HEIGHT) {
       el.scrollTop = 0
     }
-    // Decide multiline mode against fixed inline-width measurement to avoid
-    // expand/collapse bounce when layout switches between modes.
+    // Use actual textarea height to enter multiline (avoids the 1-char gap where
+    // text visually wraps but the mode hasn't toggled yet). Use the fixed-width
+    // measure only to EXIT multiline, to avoid bounce when the textarea is wider
+    // in multiline mode than it would be inline.
     const inlineHeight = measureInlineHeight(input)
     setIsMultiLine((prev) => {
-      if (!prev) return inlineHeight > MULTILINE_ENTER_HEIGHT
+      if (!prev) return naturalHeight > MULTILINE_ENTER_HEIGHT
       return inlineHeight > MULTILINE_EXIT_HEIGHT
     })
   }, [input, measureInlineHeight])

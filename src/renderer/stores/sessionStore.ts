@@ -1105,6 +1105,11 @@ export const useSessionStore = create<State>((set, get) => ({
             updated.currentActivity = ''
             updated.permissionQueue = []
             updated.permissionDenied = null
+            // If the session never initialized (no sessionId came back), the resume
+            // failed. Clear claudeSessionId so the next send doesn't retry --resume.
+            if (updated.claudeSessionId && !event.sessionId) {
+              updated.claudeSessionId = null
+            }
             updated.messages = [
               ...updated.messages,
               { id: nextMsgId(), role: 'system', content: `Error: ${event.message}`, timestamp: Date.now() },
