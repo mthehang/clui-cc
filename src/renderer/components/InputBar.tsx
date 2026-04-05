@@ -29,6 +29,8 @@ export function InputBar() {
   const [slashIndex, setSlashIndex] = useState(0)
   const [isMultiLine, setIsMultiLine] = useState(false)
   const prevIsMultiLine = useRef(false)
+  const isMultiLineRef = useRef(false)
+  const singleLineWidthRef = useRef<number>(0)
   const selectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -119,7 +121,10 @@ export function InputBar() {
 
     const m = measureRef.current
     const hostWidth = wrapperRef.current?.clientWidth ?? 0
-    const inlineWidth = Math.max(120, hostWidth - INLINE_CONTROLS_RESERVED_WIDTH)
+    // Use cached actual textarea clientWidth when available (captured during single-line renders).
+    // This eliminates the 1-char gap where the measure width doesn't match the real width.
+    const cachedWidth = singleLineWidthRef.current
+    const inlineWidth = cachedWidth > 0 ? cachedWidth : Math.max(120, hostWidth - INLINE_CONTROLS_RESERVED_WIDTH)
     m.style.width = `${inlineWidth}px`
     m.style.fontSize = '14px'
     m.style.lineHeight = '20px'
@@ -150,18 +155,25 @@ export function InputBar() {
     if (naturalHeight <= INPUT_MAX_HEIGHT) {
       el.scrollTop = 0
     }
-    // Use actual textarea height to enter multiline (avoids the 1-char gap where
-    // text visually wraps but the mode hasn't toggled yet). Use the fixed-width
-    // measure only to EXIT multiline, to avoid bounce when the textarea is wider
-    // in multiline mode than it would be inline.
+    // Cache the actual textarea clientWidth while in single-line mode.
+    // measureInlineHeight uses this so the measured wrap point matches what
+    // the user sees, eliminating the intermediate state where text visually
+    // wraps before the multiline toggle fires.
+    if (!isMultiLineRef.current) {
+      const w = el.clientWidth
+      if (w > 0) singleLineWidthRef.current = w
+    }
     const inlineHeight = measureInlineHeight(input)
     setIsMultiLine((prev) => {
-      if (!prev) return naturalHeight > MULTILINE_ENTER_HEIGHT
+      if (!prev) return inlineHeight > MULTILINE_ENTER_HEIGHT
       return inlineHeight > MULTILINE_EXIT_HEIGHT
     })
   }, [input, measureInlineHeight])
 
   useLayoutEffect(() => { autoResize() }, [input, isMultiLine, autoResize])
+
+  // Keep isMultiLineRef in sync so autoResize can read it without a dep loop.
+  useLayoutEffect(() => { isMultiLineRef.current = isMultiLine }, [isMultiLine])
 
   // Restore focus + cursor when multi-line mode toggles.
   // The textarea is in two separate JSX branches, so React unmounts/remounts
