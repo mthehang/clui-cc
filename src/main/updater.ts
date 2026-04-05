@@ -99,9 +99,7 @@ function initElectronUpdater(): boolean {
     })
     autoUpdater.on('error', (err: Error) => {
       log(`electron-updater error: ${err.message}`)
-      // Fallback: open browser
-      if (latestReleaseUrl) shell.openExternal(latestReleaseUrl)
-      broadcast({ state: 'error', message: 'Download failed — opened release page in browser.' })
+      broadcast({ state: 'error', message: `Update failed: ${err.message}` })
     })
     hasElectronUpdater = true
     log('electron-updater initialized')
@@ -147,11 +145,16 @@ export async function checkForUpdate(): Promise<void> {
 
 export function downloadUpdate(): void {
   if (hasElectronUpdater && autoUpdater) {
-    // Try electron-updater first (auto-download + auto-install)
-    log('Downloading via electron-updater...')
+    // electron-updater requires checkForUpdates() to be called before
+    // downloadUpdate() so it can resolve the latest.yml feed URL.
+    // Setting autoDownload=true makes it start downloading automatically
+    // once the check resolves, triggering download-progress and update-downloaded.
+    log('Downloading via electron-updater (checkForUpdates → autoDownload)...')
     broadcast({ state: 'downloading', percent: 0 })
-    autoUpdater.downloadUpdate().catch((err: Error) => {
-      log(`electron-updater download failed: ${err.message}, falling back to browser`)
+    autoUpdater.autoDownload = true
+    autoUpdater.checkForUpdates().catch((err: Error) => {
+      log(`electron-updater check failed: ${err.message}, falling back to browser`)
+      autoUpdater.autoDownload = false
       if (latestReleaseUrl) shell.openExternal(latestReleaseUrl)
       broadcast({ state: 'error', message: 'Auto-download failed — opened release page.' })
     })
