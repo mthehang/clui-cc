@@ -3,6 +3,9 @@ import { log as _log } from './logger'
 import { IPC } from '../shared/types'
 import type { UpdateStatus } from '../shared/types'
 import https from 'https'
+import http from 'http'
+import fs from 'fs'
+import path from 'path'
 
 const GITHUB_OWNER = 'mthehang'
 const GITHUB_REPO = 'clui-cc'
@@ -14,7 +17,9 @@ function log(msg: string): void {
 let mainWindowRef: BrowserWindow | null = null
 let currentStatus: UpdateStatus = { state: 'idle' }
 let latestReleaseUrl: string | null = null
-let hasElectronUpdater = false
+let latestInstallerUrl: string | null = null
+let latestVersion: string | null = null
+let downloadedInstallerPath: string | null = null
 
 function broadcast(status: UpdateStatus): void {
   currentStatus = status
@@ -27,7 +32,6 @@ export function getUpdateStatus(): UpdateStatus {
   return currentStatus
 }
 
-/** Compare semver strings. Returns 1 if a > b, -1 if a < b, 0 if equal. */
 function compareSemver(a: string, b: string): number {
   const pa = a.replace(/^v/, '').split('.').map(Number)
   const pb = b.replace(/^v/, '').split('.').map(Number)
@@ -40,26 +44,31 @@ function compareSemver(a: string, b: string): number {
   return 0
 }
 
-/** Fetch latest GitHub release via API (no auth needed for public repos). */
-function fetchLatestRelease(): Promise<{ version: string; htmlUrl: string; body: string; hasInstaller: boolean }> {
+interface ReleaseInfo {
+  version: string
+  htmlUrl: string
+  body: string
+  installerUrl: string | null
+}
+
+function fetchLatestRelease(): Promise<ReleaseInfo> {
   return new Promise((resolve, reject) => {
     const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
     const opts = { headers: { 'User-Agent': 'CLUI-CC-Updater' } }
 
     function parseResponse(data: string): void {
       const json = JSON.parse(data)
-      const assets: Array<{ name: string }> = json.assets || []
-      const hasInstaller = assets.some((a) => a.name.endsWith('.exe') || a.name === 'latest.yml')
+      const assets: Array<{ name: string; browser_download_url: string }> = json.assets || []
+      const installer = assets.find((a) => a.name.endsWith('.exe'))
       resolve({
         version: json.tag_name?.replace(/^v/, '') || json.name,
         htmlUrl: json.html_url,
         body: json.body || '',
-        hasInstaller,
+        installerUrl: installer?.browser_download_url ?? null,
       })
     }
 
     const req = https.get(url, opts, (res) => {
-      // Follow one redirect (GitHub sometimes redirects)
       if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
         https.get(res.headers.location, opts, (res2) => {
           let data = ''
@@ -78,43 +87,47 @@ function fetchLatestRelease(): Promise<{ version: string; htmlUrl: string; body:
   })
 }
 
-// ─── electron-updater (lazy-loaded, only in packaged builds) ───
-
-let autoUpdater: any = null
-
-function initElectronUpdater(): boolean {
-  if (!app.isPackaged) return false
-  try {
-    const eu = require('electron-updater')
-    autoUpdater = eu.autoUpdater
-    autoUpdater.autoDownload = false
-    autoUpdater.autoInstallOnAppQuit = false
-
-    autoUpdater.on('download-progress', (p: any) => {
-      broadcast({ state: 'downloading', percent: p.percent })
-    })
-    autoUpdater.on('update-downloaded', (info: any) => {
-      log(`Update downloaded: ${info.version}`)
-      broadcast({ state: 'downloaded', version: info.version })
-    })
-    autoUpdater.on('error', (err: Error) => {
-      log(`electron-updater error: ${err.message}`)
-      broadcast({ state: 'error', message: `Update failed: ${err.message}` })
-    })
-    hasElectronUpdater = true
-    log('electron-updater initialized')
-    return true
-  } catch (err: any) {
-    log(`electron-updater not available: ${err.message}`)
-    return false
-  }
+/** Download a URL to dest, following redirects, firing onProgress(0-100). */
+function downloadFile(
+  url: string,
+  dest: string,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    function doGet(targetUrl: string, redirects = 0): void {
+      if (redirects > 10) { reject(new Error('Too many redirects')); return }
+      const mod = targetUrl.startsWith('https') ? https : http
+      const req = (mod as typeof https).get(targetUrl, (res) => {
+        const { statusCode, headers } = res
+        if (statusCode === 301 || statusCode === 302 || statusCode === 307 || statusCode === 308) {
+          if (headers.location) { res.resume(); doGet(headers.location, redirects + 1) }
+          else { reject(new Error('Redirect with no location')) }
+          return
+        }
+        if (statusCode !== 200) { res.resume(); reject(new Error(`HTTP ${statusCode}`)); return }
+        const total = parseInt(headers['content-length'] || '0', 10)
+        let received = 0
+        const file = fs.createWriteStream(dest)
+        res.on('data', (chunk: Buffer) => {
+          received += chunk.length
+          if (total > 0) onProgress(Math.round((received / total) * 100))
+        })
+        res.pipe(file)
+        file.on('finish', () => { file.close(); resolve() })
+        file.on('error', (err) => { try { fs.unlinkSync(dest) } catch {} ; reject(err) })
+        res.on('error', (err) => { try { fs.unlinkSync(dest) } catch {}; reject(err) })
+      })
+      req.on('error', reject)
+      req.setTimeout(120_000, () => { req.destroy(); reject(new Error('Download timeout')) })
+    }
+    doGet(url)
+  })
 }
 
 // ─── Public API ───
 
 export function initAutoUpdater(win: BrowserWindow): void {
   mainWindowRef = win
-  initElectronUpdater()
   setTimeout(() => checkForUpdate(), 5000)
 }
 
@@ -123,17 +136,14 @@ export async function checkForUpdate(): Promise<void> {
   try {
     const currentVersion = app.getVersion()
     log(`Current version: ${currentVersion}`)
-
     const release = await fetchLatestRelease()
-    log(`Latest release: ${release.version} (hasInstaller=${release.hasInstaller})`)
+    log(`Latest: ${release.version}, installer: ${release.installerUrl ? 'yes' : 'no'}`)
 
     if (compareSemver(release.version, currentVersion) > 0) {
       latestReleaseUrl = release.htmlUrl
-      broadcast({
-        state: 'available',
-        version: release.version,
-        releaseNotes: release.body || undefined,
-      })
+      latestInstallerUrl = release.installerUrl
+      latestVersion = release.version
+      broadcast({ state: 'available', version: release.version, releaseNotes: release.body || undefined })
     } else {
       broadcast({ state: 'up-to-date', version: currentVersion })
     }
@@ -144,32 +154,44 @@ export async function checkForUpdate(): Promise<void> {
 }
 
 export function downloadUpdate(): void {
-  if (hasElectronUpdater && autoUpdater) {
-    // electron-updater requires checkForUpdates() to be called before
-    // downloadUpdate() so it can resolve the latest.yml feed URL.
-    // Setting autoDownload=true makes it start downloading automatically
-    // once the check resolves, triggering download-progress and update-downloaded.
-    log('Downloading via electron-updater (checkForUpdates → autoDownload)...')
-    broadcast({ state: 'downloading', percent: 0 })
-    autoUpdater.autoDownload = true
-    autoUpdater.checkForUpdates().catch((err: Error) => {
-      log(`electron-updater check failed: ${err.message}, falling back to browser`)
-      autoUpdater.autoDownload = false
-      if (latestReleaseUrl) shell.openExternal(latestReleaseUrl)
-      broadcast({ state: 'error', message: 'Auto-download failed — opened release page.' })
-    })
-  } else {
-    // Fallback: open release page in browser
-    log('Opening release page in browser (no electron-updater)')
+  if (!latestInstallerUrl) {
+    // No .exe asset in release — open release page as fallback
+    const url = latestReleaseUrl || `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+    log('No installer asset found, opening release page')
+    shell.openExternal(url)
+    return
+  }
+
+  const tmpPath = path.join(app.getPath('temp'), `clui-setup-${latestVersion || 'latest'}.exe`)
+  log(`Downloading installer to ${tmpPath}`)
+  broadcast({ state: 'downloading', percent: 0 })
+
+  downloadFile(latestInstallerUrl, tmpPath, (percent) => {
+    broadcast({ state: 'downloading', percent })
+  }).then(() => {
+    log('Download complete')
+    downloadedInstallerPath = tmpPath
+    broadcast({ state: 'downloaded', version: latestVersion || '' })
+  }).catch((err: Error) => {
+    log(`Download failed: ${err.message}`)
+    try { fs.unlinkSync(tmpPath) } catch {}
     const url = latestReleaseUrl || `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
     shell.openExternal(url)
-  }
+    broadcast({ state: 'error', message: 'Download falhou — abrindo página de release.' })
+  })
 }
 
 export function installUpdate(): void {
-  if (hasElectronUpdater && autoUpdater) {
-    autoUpdater.quitAndInstall(false, true)
+  if (downloadedInstallerPath && fs.existsSync(downloadedInstallerPath)) {
+    log(`Launching installer: ${downloadedInstallerPath}`)
+    shell.openPath(downloadedInstallerPath).then(() => {
+      setTimeout(() => app.quit(), 500)
+    }).catch((err) => {
+      log(`Failed to open installer: ${err}`)
+      app.quit()
+    })
   } else {
-    shell.openExternal(`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`)
+    const url = latestReleaseUrl || `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+    shell.openExternal(url)
   }
 }
